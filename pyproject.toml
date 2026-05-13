@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fast_exp_analytics"
+version = "0.1.31"
+description = "Python toolkit for AB/ABC experiment analytics, duration planning, reporting and exports"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  {name = "Alexey Voronko"}
+]
+keywords = ["ab-test", "abc-test", "experiment-analysis", "mde", "voronko", "analytics", "klipbn"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "scipy>=1.10",
+  "statsmodels>=0.14",
+  "requests>=2.0",
+  "openpyxl>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2.1",
+  "twine>=5.1.1",
+  "pytest>=8.0",
+  "ruff>=0.5",
+  "jupyter>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/klipbn/fast_exp_analytics"
+Documentation = "https://github.com/klipbn/fast_exp_analytics"
+Repository = "https://github.com/klipbn/fast_exp_analytics"
+Issues = "https://github.com/klipbn/fast_exp_analytics"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fast_exp_analytics*"]
+
+[tool.setuptools.package-data]
+fast_exp_analytics = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
