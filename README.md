@@ -1,7 +1,31 @@
 # fast_exp_analytics
-![PyPI](https://img.shields.io/pypi/v/fast_exp_analytics.svg)
-![Python](https://img.shields.io/badge/python-3.9%2B-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+<h1 align="center">fast_exp_analytics</h1>
+
+<p align="center">
+  <b>Fast experiment analytics toolkit for A/B and A/B/C tests, MDE estimation, experiment duration planning, reporting, and chat-ready summaries.</b>
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/fast-exp-analytics/">
+    <img src="https://img.shields.io/pypi/v/fast-exp-analytics.svg" alt="PyPI version">
+  </a>
+  <img src="https://img.shields.io/badge/python-3.9%2B-blue" alt="Python 3.9+">
+  <a href="https://github.com/klipbn/fast_exp_analytics/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
+  </a>
+  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Project status">
+  <img src="https://img.shields.io/badge/notebook-friendly-purple" alt="Notebook friendly">
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/fast-exp-analytics/">PyPI</a>
+  ·
+  <a href="https://github.com/klipbn/fast_exp_analytics">GitHub</a>
+  ·
+  <a href="https://github.com/klipbn/fast_exp_analytics/blob/main/examples/fast_exp_analytics_example.ipynb">Example notebook</a>
+  ·
+  <a href="https://github.com/klipbn/fast_exp_analytics/issues">Issues</a>
+</p>
 
 Fast experiment analytics toolkit for A/B and A/B/C tests, MDE estimation, experiment duration planning, reporting, and chat-ready summaries
 
