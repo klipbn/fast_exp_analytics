@@ -1,4 +1,3 @@
-# fast_exp_analytics
 <h1 align="center">fast_exp_analytics</h1>
 
 <p align="center">
