@@ -517,4 +517,4 @@ fast_exp_analytics/
 
 ## License
 
-MIT © 2025 Alexey Voronko
+MIT © 2026 Alexey Voronko
