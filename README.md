@@ -1,4 +1,7 @@
 # fast_exp_analytics
+![PyPI](https://img.shields.io/pypi/v/fast_exp_analytics.svg)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 Fast experiment analytics toolkit for A/B and A/B/C tests, MDE estimation, experiment duration planning, reporting, and chat-ready summaries
 
