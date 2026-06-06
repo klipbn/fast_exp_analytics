@@ -2,6 +2,35 @@
 
 All notable changes to this project should be documented in this file
 
+## [0.1.40] - 2026-06-06
+
+### Changed
+
+- Reworked `build_ab_chat_message`: metric output logic is now closer to `build_abc_chat_message`
+- Added the ability to control key metrics in `build_ab_chat_message` via the `key_metrics` parameter
+- Added the ability to limit the number of key metrics via `max_metrics_per_pair`
+- Added the ability to separately limit the number of additional notable metrics via `max_colored_extra_per_pair`
+- Kept backward compatibility with the legacy `max_metrics` parameter: when passed, it overrides `max_metrics_per_pair`
+- Updated metric sorting: key metrics are printed first in the given order, followed by additional significant or notable metrics
+- Improved AB bot message formatting: an empty `metric_type` is no longer rendered as empty parentheses
+- Improved handling of `p_value`, `rel_delta`, `NaN`, `None`, `inf` and numpy/pandas scalar types
+- Reworked `build_dashboard_url_ab`: `extra_params` now supports `list` and `tuple` values, like the ABC version
+
+### Added
+
+- Added the `alpha` parameter to control the statistical significance threshold in `build_ab_chat_message`
+- Added the `_safe_rel_delta_pct` helper for safe relative-delta-percent computation
+- Added the `_icon_for_ab_row` helper for the extended icon logic in AB messages
+- Added a fallback to the legacy sorting when no key metrics and no notable extra metrics are found
+- Added protection against missing optional columns in `df_result`
+
+### Fixed
+
+- Fixed a crash risk in `build_ab_chat_message` when the dataframe lacks `p_value`, `rel_delta`, `metric_name` or `metric_type`
+- Fixed formatting of very small p-values: values below `0.0001` are now rendered as `&lt;0,0001`
+- Fixed the risk of overly long chat messages by limiting key and extra metrics separately
+- Fixed a potential issue with incorrect metric rendering on empty or incomplete data
+
 ## [0.1.31] - 2026-04-12
 
 ### Changed
