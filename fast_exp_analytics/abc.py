@@ -11,6 +11,7 @@ from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.proportion import proportions_ztest
 from statsmodels.stats.weightstats import CompareMeans, DescrStatsW
 
+from .confidence_intervals import metric_confidence_interval
 from .config import validate_metrics_config
 
 ALPHA = 0.05
@@ -44,6 +45,8 @@ AGGREGATE_COLUMN_NAMES_ABC = [
     "n_required_per_group",
     "power_now",
     "direction",
+    "ci_lower",
+    "ci_upper",
 ]
 
 def _is_finite(x) -> bool:
@@ -69,6 +72,19 @@ def _harmonic_mean_n(n1, n2):
     if n1 <= 0 or n2 <= 0:
         return np.nan
     return float(2 / (1 / n1 + 1 / n2))
+
+def _welch_df(std_c, n_c, std_t, n_t):
+    """Welch-Satterthwaite degrees of freedom for a two-sample t-interval."""
+    if not _is_finite(std_c) or not _is_finite(std_t) or n_c <= 1 or n_t <= 1:
+        return np.nan
+    v_c = float(std_c) ** 2 / n_c
+    v_t = float(std_t) ** 2 / n_t
+    num = (v_c + v_t) ** 2
+    den = (v_c**2) / (n_c - 1) + (v_t**2) / (n_t - 1)
+    if den == 0:
+        return np.nan
+    return float(num / den)
+
 
 def _days_to_reach_required_n(n_current, n_required, days_running):
     if not _is_finite(n_required) or n_required <= 0:
@@ -292,6 +308,13 @@ def calculate_stat_pair(df_control_metrics, df_pilot_metrics, metric_type, direc
     number_samples, n_base, n_exp = calculate_number_samples(df_control_metrics, df_pilot_metrics)
     p_value = calculate_p_value(df_control_metrics, df_pilot_metrics, metric_type)
 
+    ci_lower, ci_upper = metric_confidence_interval(
+        df_control_metrics,
+        df_pilot_metrics,
+        metric_type,
+        alpha,
+    )
+
     if metric_type in ["additive", "average"]:
         observed_delta = avg_abs_delta
     elif metric_type in ["ratio", "share"]:
@@ -334,6 +357,8 @@ def calculate_stat_pair(df_control_metrics, df_pilot_metrics, metric_type, direc
         "effect_size_proxy": effect,
         "days_more_base": days_more_base,
         "days_more_exp": days_more_exp,
+        "ci_lower": ci_lower,
+        "ci_upper": ci_upper,
     }
 
 def _apply_pairwise_pvalue_adjustment(df_result, alpha=ALPHA, method="holm", group_cols=("metric_name",)):
@@ -452,7 +477,7 @@ def style_table_abc(df_result: pd.DataFrame, caption: str = ""):
         .apply(highlight_pairs, axis=1)
         .map(format_result, subset=["result", "result_adj"])
         .background_gradient(subset=["rel_delta"], axis=0, cmap="RdYlGn")
-        .format("{:,.4f}", subset=["value_base", "value_exp", "abs_delta", "mde", "avg_value_base", "avg_value_exp", "avg_abs_delta", "p_value", "p_value_adj", "power_now"])
+        .format("{:,.4f}", subset=["value_base", "value_exp", "abs_delta", "mde", "avg_value_base", "avg_value_exp", "avg_abs_delta", "p_value", "p_value_adj", "power_now", "ci_lower", "ci_upper"])
         .format("{:.2%}", subset=["rel_delta"])
         .format("{:.2f}", subset=["avg_rel_delta"])
         .format("{:.0f}", subset=["number_samples", "number_samples_base", "number_samples_exp", "days_more_if_same_delta", "days_more_base", "days_more_exp", "n_required_per_group"])
