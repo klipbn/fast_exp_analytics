@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.formatting.rule import CellIsRule
@@ -47,7 +46,7 @@ def _apply_number_formats(ws, header_map: dict[str, int], n_rows: int):
     percent_plain = ["avg_rel_delta", "power_now"]
     p_cols = ["p_value", "p_value_adj"]
     int_cols = ["number_samples", "number_samples_base", "number_samples_exp", "days_more_if_same_delta", "days_more_base", "days_more_exp", "n_required_per_group"]
-    decimal4_cols = ["value_base", "value_exp", "abs_delta", "mde", "avg_value_base", "avg_value_exp", "avg_abs_delta"]
+    decimal4_cols = ["value_base", "value_exp", "abs_delta", "mde", "avg_value_base", "avg_value_exp", "avg_abs_delta", "ci_lower", "ci_upper"]
     for col in percent_fraction:
         if col in header_map:
             c = header_map[col]

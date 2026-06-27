@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fast_exp_analytics"
-version = "0.1.40"
+version = "0.1.41"
 description = "Python toolkit for AB/ABC experiment analytics, duration planning, reporting and exports"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.formatting.rule import CellIsRule
@@ -81,6 +80,8 @@ def _apply_number_formats(ws, header_map: dict[str, int], n_rows: int):
         "avg_value_base",
         "avg_value_exp",
         "avg_abs_delta",
+        "ci_lower",
+        "ci_upper",
     ]
 
     for col in percent_cols_fraction:
@@ -221,6 +222,8 @@ def export_ab_results_to_excel(
         "n_required_per_group",
         "power_now",
         "direction",
+        "ci_lower",
+        "ci_upper",
     ]
     existing_cols = [c for c in preferred_cols if c in df.columns] + [
         c for c in df.columns if c not in preferred_cols

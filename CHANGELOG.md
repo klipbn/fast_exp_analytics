@@ -2,6 +2,17 @@
 
 All notable changes to this project should be documented in this file
 
+## [0.1.41] - 2026-06-27
+
+### Added
+
+- Added confidence intervals (`ci_lower`, `ci_upper`) for the difference between groups in AB and ABC tests
+- CI is computed for all metric types except `median` (NaN)
+- Calculation method: Welch's t-interval for additive/average/ratio metrics, Wald z-interval for share metrics
+- Added the `_welch_df()` helper for Welch-Satterthwaite degrees of freedom
+- `ci_lower`, `ci_upper` columns added to AB and ABC Excel exports with `#,##0.0000` formatting
+- `ci_lower`, `ci_upper` columns added to styled DataFrame tables
+
 ## [0.1.40] - 2026-06-06
 
 ### Changed
