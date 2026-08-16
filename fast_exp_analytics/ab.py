@@ -81,11 +81,12 @@ def _clean_numeric_series(x):
 
 
 def _share_success_obs(df_: pd.DataFrame):
-    obs = int((df_["den"] > 0).sum())
+    valid = (df_["den"] > 0) & df_["num"].notna()
+    obs = int(valid.sum())
     if obs == 0:
         return 0, 0, np.nan
 
-    success = int(((df_["den"] > 0) & (df_["num"] > 0)).sum())
+    success = int((valid & (df_["num"] > 0)).sum())
     p = success / obs
     return success, obs, float(p)
 
@@ -114,10 +115,16 @@ def _prep_metric_pair_frames(
         df_tst["value"] = np.where(df_tst["den"] > 0, df_tst["num"], np.nan)
 
     elif metric_type == "share":
-        df_ctrl["value"] = np.where(df_ctrl["den"] > 0, (df_ctrl["num"] > 0).astype(float), np.nan)
-        df_tst["value"] = np.where(df_tst["den"] > 0, (df_tst["num"] > 0).astype(float), np.nan)
+        ctrl_valid = (df_ctrl["den"] > 0) & df_ctrl["num"].notna()
+        tst_valid = (df_tst["den"] > 0) & df_tst["num"].notna()
+        df_ctrl["value"] = np.where(ctrl_valid, (df_ctrl["num"] > 0).astype(float), np.nan)
+        df_tst["value"] = np.where(tst_valid, (df_tst["num"] > 0).astype(float), np.nan)
 
     elif metric_type == "ratio":
+        ctrl_valid = df_ctrl["num"].notna() & df_ctrl["den"].notna()
+        tst_valid = df_tst["num"].notna() & df_tst["den"].notna()
+        df_ctrl.loc[~ctrl_valid, ["num", "den"]] = np.nan
+        df_tst.loc[~tst_valid, ["num", "den"]] = np.nan
         den_sum_ctrl = df_ctrl["den"].sum()
         if _is_finite(den_sum_ctrl) and float(den_sum_ctrl) != 0:
             linearization_coeff = df_ctrl["num"].sum() / den_sum_ctrl
@@ -379,18 +386,10 @@ def calculate_p_value(df_control_metrics, df_pilot_metrics, metric_type):
         p_value = stats.mannwhitneyu(x1, x2, alternative="two-sided")[1]
 
     elif metric_type == "share":
-        success = np.array(
-            [
-                int(((df_control_metrics["den"] > 0) & (df_control_metrics["num"] > 0)).sum()),
-                int(((df_pilot_metrics["den"] > 0) & (df_pilot_metrics["num"] > 0)).sum()),
-            ]
-        )
-        obs = np.array(
-            [
-                int((df_control_metrics["den"] > 0).sum()),
-                int((df_pilot_metrics["den"] > 0).sum()),
-            ]
-        )
+        control_success, control_observations, _ = _share_success_obs(df_control_metrics)
+        experiment_success, experiment_observations, _ = _share_success_obs(df_pilot_metrics)
+        success = np.array([control_success, experiment_success])
+        obs = np.array([control_observations, experiment_observations])
 
         if obs.min() == 0:
             p_value = np.nan
@@ -400,7 +399,7 @@ def calculate_p_value(df_control_metrics, df_pilot_metrics, metric_type):
     else:
         p_value = np.nan
 
-    return float(np.round(p_value, 4)) if _is_finite(p_value) else np.nan
+    return float(p_value) if _is_finite(p_value) else np.nan
 
 
 def calculate_stat(
@@ -411,6 +410,8 @@ def calculate_stat(
     days_running: int,
     alpha=ALPHA,
     power=POWER,
+    ci_bootstrap_resamples: int = 10_000,
+    ci_random_state: int | None = 0,
 ):
     base_value, exp_value, abs_delta_value, rel_delta_value = calculate_base_exp_values(
         df_control_metrics,
@@ -433,6 +434,8 @@ def calculate_stat(
         df_pilot_metrics,
         metric_type,
         alpha,
+        ci_bootstrap_resamples,
+        ci_random_state,
     )
 
     if metric_type in ["additive", "average"]:
@@ -551,6 +554,8 @@ def run_ab_test(
     group_exp: str = "B",
     alpha: float = ALPHA,
     power: float = POWER,
+    ci_bootstrap_resamples: int = 10_000,
+    ci_random_state: int | None = 0,
 ) -> pd.DataFrame:
     days_running = _days_elapsed(exp_start_date, exp_end_date)
     rows: list[dict[str, Any]] = []
@@ -587,6 +592,8 @@ def run_ab_test(
             days_running=days_running,
             alpha=alpha,
             power=power,
+            ci_bootstrap_resamples=ci_bootstrap_resamples,
+            ci_random_state=ci_random_state,
         )
 
         rows.append(

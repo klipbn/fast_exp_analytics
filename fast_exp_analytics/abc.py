@@ -113,9 +113,15 @@ def _prep_metric_pair_frames(df_metric, group_ctrl="A", group_tst="B", metric_ty
         df_ctrl["value"] = np.where(df_ctrl["den"] > 0, df_ctrl["num"], np.nan)
         df_tst["value"] = np.where(df_tst["den"] > 0, df_tst["num"], np.nan)
     elif metric_type == "share":
-        df_ctrl["value"] = np.where(df_ctrl["den"] > 0, (df_ctrl["num"] > 0).astype(float), np.nan)
-        df_tst["value"] = np.where(df_tst["den"] > 0, (df_tst["num"] > 0).astype(float), np.nan)
+        ctrl_valid = (df_ctrl["den"] > 0) & df_ctrl["num"].notna()
+        tst_valid = (df_tst["den"] > 0) & df_tst["num"].notna()
+        df_ctrl["value"] = np.where(ctrl_valid, (df_ctrl["num"] > 0).astype(float), np.nan)
+        df_tst["value"] = np.where(tst_valid, (df_tst["num"] > 0).astype(float), np.nan)
     elif metric_type == "ratio":
+        ctrl_valid = df_ctrl["num"].notna() & df_ctrl["den"].notna()
+        tst_valid = df_tst["num"].notna() & df_tst["den"].notna()
+        df_ctrl.loc[~ctrl_valid, ["num", "den"]] = np.nan
+        df_tst.loc[~tst_valid, ["num", "den"]] = np.nan
         den_sum_ctrl = df_ctrl["den"].sum()
         linearization_coeff = df_ctrl["num"].sum() / den_sum_ctrl if _is_finite(den_sum_ctrl) and float(den_sum_ctrl) != 0 else np.nan
         df_ctrl["value"] = df_ctrl["num"] - linearization_coeff * df_ctrl["den"]
@@ -125,10 +131,11 @@ def _prep_metric_pair_frames(df_metric, group_ctrl="A", group_tst="B", metric_ty
     return df_ctrl, df_tst
 
 def _share_success_obs(df_):
-    obs = int((df_["den"] > 0).sum())
+    valid = (df_["den"] > 0) & df_["num"].notna()
+    obs = int(valid.sum())
     if obs == 0:
         return 0, 0, np.nan
-    success = int(((df_["den"] > 0) & (df_["num"] > 0)).sum())
+    success = int((valid & (df_["num"] > 0)).sum())
     return success, obs, float(success / obs)
 
 def calculate_number_samples(df_control_metrics, df_pilot_metrics):
@@ -291,17 +298,27 @@ def calculate_p_value(df_control_metrics, df_pilot_metrics, metric_type):
             return np.nan
         p_value = stats.mannwhitneyu(x1, x2, alternative="two-sided")[1]
     elif metric_type == "share":
-        success = np.array([
-            int(((df_control_metrics["den"] > 0) & (df_control_metrics["num"] > 0)).sum()),
-            int(((df_pilot_metrics["den"] > 0) & (df_pilot_metrics["num"] > 0)).sum()),
-        ])
-        obs = np.array([int((df_control_metrics["den"] > 0).sum()), int((df_pilot_metrics["den"] > 0).sum())])
+        control_success, control_observations, _ = _share_success_obs(df_control_metrics)
+        experiment_success, experiment_observations, _ = _share_success_obs(df_pilot_metrics)
+        success = np.array([control_success, experiment_success])
+        obs = np.array([control_observations, experiment_observations])
         p_value = np.nan if obs.min() == 0 else proportions_ztest(success, obs)[1]
     else:
         raise ValueError(f"Unsupported metric type: {metric_type}")
     return float(p_value) if _is_finite(p_value) else np.nan
 
-def calculate_stat_pair(df_control_metrics, df_pilot_metrics, metric_type, direction, days_running: int, alpha=ALPHA, power=POWER):
+def calculate_stat_pair(
+    df_control_metrics,
+    df_pilot_metrics,
+    metric_type,
+    direction,
+    days_running: int,
+    alpha=ALPHA,
+    power=POWER,
+    ci_alpha: float | None = None,
+    ci_bootstrap_resamples: int = 10_000,
+    ci_random_state: int | None = 0,
+):
     base_value, exp_value, abs_delta_value, rel_delta_value = calculate_base_exp_values(df_control_metrics, df_pilot_metrics, metric_type)
     avg_base_value, avg_exp_value, avg_abs_delta, avg_rel_delta = calculate_avg_base_exp_values(df_control_metrics, df_pilot_metrics, metric_type)
     mde, effect = calculate_mde(df_control_metrics, df_pilot_metrics, metric_type, alpha, power)
@@ -312,7 +329,9 @@ def calculate_stat_pair(df_control_metrics, df_pilot_metrics, metric_type, direc
         df_control_metrics,
         df_pilot_metrics,
         metric_type,
-        alpha,
+        alpha if ci_alpha is None else ci_alpha,
+        ci_bootstrap_resamples,
+        ci_random_state,
     )
 
     if metric_type in ["additive", "average"]:
@@ -408,7 +427,18 @@ def _check_required_columns(df: pd.DataFrame, metrics_df: pd.DataFrame):
     if missing:
         raise ValueError(f"Input data is missing required columns: {missing}")
 
-def run_abc_test(df: pd.DataFrame, metrics_df: pd.DataFrame, exp_start_date, exp_end_date, include_bc: bool = True, alpha: float = ALPHA, power: float = POWER, pvalue_adjust_method: str | None = "holm") -> pd.DataFrame:
+def run_abc_test(
+    df: pd.DataFrame,
+    metrics_df: pd.DataFrame,
+    exp_start_date,
+    exp_end_date,
+    include_bc: bool = True,
+    alpha: float = ALPHA,
+    power: float = POWER,
+    pvalue_adjust_method: str | None = "holm",
+    ci_bootstrap_resamples: int = 10_000,
+    ci_random_state: int | None = 0,
+) -> pd.DataFrame:
     metrics_df = validate_metrics_config(metrics_df)
     _check_required_columns(df, metrics_df)
     days_running = _days_elapsed(exp_start_date, exp_end_date)
@@ -416,6 +446,9 @@ def run_abc_test(df: pd.DataFrame, metrics_df: pd.DataFrame, exp_start_date, exp
     pairs = [("A", "B", "A_vs_B"), ("A", "C", "A_vs_C")]
     if include_bc:
         pairs.append(("B", "C", "B_vs_C"))
+
+    # Simultaneous CIs: Bonferroni correction across the compared pairs.
+    ci_alpha = alpha / len(pairs)
 
     rows = []
     for metric in metrics_df.index:
@@ -433,7 +466,18 @@ def run_abc_test(df: pd.DataFrame, metrics_df: pd.DataFrame, exp_start_date, exp
 
         for group_base, group_exp, pair_name in pairs:
             df_control_metrics, df_pilot_metrics = _prep_metric_pair_frames(df_metric, group_base, group_exp, metric_type)
-            stat_row = calculate_stat_pair(df_control_metrics, df_pilot_metrics, metric_type, metric_direction, days_running, alpha, power)
+            stat_row = calculate_stat_pair(
+                df_control_metrics,
+                df_pilot_metrics,
+                metric_type,
+                metric_direction,
+                days_running,
+                alpha,
+                power,
+                ci_alpha,
+                ci_bootstrap_resamples,
+                ci_random_state,
+            )
             rows.append({
                 "metric_name": metric_name,
                 "metric_type": metric_type,
