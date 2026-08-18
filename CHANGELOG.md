@@ -2,6 +2,25 @@
 
 All notable changes to this project should be documented in this file
 
+## [0.1.50] - 2026-08-18
+
+### Fixed
+
+- Fixed the confidence interval of ratio metrics: the delta method is now used with the variance and denominator mean of each group
+- For share metrics the Wald interval was replaced with the Newcombe-Wilson interval, which works correctly at 0% and 100% shares
+- For median metrics a reproducible BCa bootstrap confidence interval was added, with a percentile fallback for degenerate distributions
+- In AB the p-value is no longer rounded before the statistical significance decision
+
+### Changed
+
+- In ABC the confidence intervals became simultaneous: a Bonferroni correction over the number of compared pairs is applied
+- Added the `ci_bootstrap_resamples` and `ci_random_state` parameters to AB and ABC for tuning the median bootstrap interval
+- The `ci_lower` and `ci_upper` columns are now explicitly placed after `power_now` in the AB Excel report
+
+### Added
+
+- Added tests for the confidence interval formulas, all metric types, ABC correction and Excel export
+
 ## [0.1.41] - 2026-06-27
 
 ### Added

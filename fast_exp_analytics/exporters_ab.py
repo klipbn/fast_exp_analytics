@@ -221,9 +221,9 @@ def export_ab_results_to_excel(
         "days_more_exp",
         "n_required_per_group",
         "power_now",
-        "direction",
         "ci_lower",
         "ci_upper",
+        "direction",
     ]
     existing_cols = [c for c in preferred_cols if c in df.columns] + [
         c for c in df.columns if c not in preferred_cols
