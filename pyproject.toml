@@ -12,21 +12,23 @@ license = "MIT"
 authors = [
   {name = "Alexey Voronko"}
 ]
-keywords = ["ab-test", "abc-test", "experiment-analysis", "mde", "voronko", "analytics", "klipbn"]
+keywords = ["ab-testing", "abc-testing", "experiment-analysis", "mde", "statistics", "analytics", "data-science", "product-analytics"]
 classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
-  "Intended Audience :: Developers",
-  "Intended Audience :: Science/Research",
   "Topic :: Scientific/Engineering :: Information Analysis",
+  "Typing :: Typed",
   "Operating System :: OS Independent",
 ]
 dependencies = [
   "numpy>=1.24",
-  "pandas>=2.0",
+  "pandas>=2.1",
   "scipy>=1.10",
   "statsmodels>=0.14",
   "requests>=2.0",
@@ -46,7 +48,7 @@ dev = [
 Homepage = "https://github.com/klipbn/fast_exp_analytics"
 Documentation = "https://github.com/klipbn/fast_exp_analytics"
 Repository = "https://github.com/klipbn/fast_exp_analytics"
-Issues = "https://github.com/klipbn/fast_exp_analytics"
+Issues = "https://github.com/klipbn/fast_exp_analytics/issues"
 
 [tool.setuptools]
 include-package-data = true

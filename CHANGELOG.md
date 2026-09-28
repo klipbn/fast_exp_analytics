@@ -2,6 +2,19 @@
 
 All notable changes to this project should be documented in this file
 
+## [Unreleased]
+
+### Added
+
+- `run_ab_test` now validates the metrics config and input columns up front and raises a descriptive `ValueError` for missing columns (previously an opaque pandas `KeyError`), matching the existing ABC behavior
+- Tests for config validation, duration planning, reporting/message formatting and the new input validation
+
+### Changed
+
+- Replaced the deprecated `Styler.applymap` with `Styler.map` in `style_table_ab` (pandas requirement raised to `>=2.1`); removes a `FutureWarning` on modern pandas
+- Removed unused imports
+- Cleaned up `.gitignore` and package metadata (keywords, classifiers, issues URL)
+
 ## [0.1.50] - 2026-08-18
 
 ### Fixed

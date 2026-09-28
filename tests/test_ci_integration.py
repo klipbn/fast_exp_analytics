@@ -2,6 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 from openpyxl import load_workbook
 from statsmodels.stats.weightstats import CompareMeans, DescrStatsW
 
@@ -156,3 +157,15 @@ def test_share_ignores_rows_with_missing_outcome():
 
     assert result["value_base"] == 1.0
     assert result["value_exp"] == 0.5
+
+
+def test_ab_reports_missing_input_columns():
+    data = pd.DataFrame({"user_id": [1, 2], "exp_group": ["A", "B"]})
+    metrics = pd.DataFrame(
+        [["Shows", "additive", "shows", "shows", "positive"]],
+        index=["shows"],
+        columns=["desc", "type", "num", "den", "direction"],
+    )
+
+    with pytest.raises(ValueError, match="missing required columns"):
+        run_ab_test(data, metrics, "2026-01-01", "2026-01-07")

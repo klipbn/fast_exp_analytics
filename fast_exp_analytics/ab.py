@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -10,6 +9,7 @@ from statsmodels.stats.proportion import proportions_ztest
 from statsmodels.stats.weightstats import CompareMeans, DescrStatsW
 
 from .confidence_intervals import metric_confidence_interval
+from .config import validate_metrics_config
 
 ALPHA = 0.05
 POWER = 0.80
@@ -545,6 +545,16 @@ AGGREGATE_COLUMN_NAMES_AB = [
 ]
 
 
+def _check_required_columns(df: pd.DataFrame, metrics_df: pd.DataFrame):
+    required = {"user_id", "exp_group"}
+    for _, row in metrics_df.iterrows():
+        required.add(row["num"])
+        required.add(row["den"])
+    missing = [c for c in sorted(required) if c not in df.columns]
+    if missing:
+        raise ValueError(f"Input data is missing required columns: {missing}")
+
+
 def run_ab_test(
     df: pd.DataFrame,
     metrics_df: pd.DataFrame,
@@ -557,6 +567,8 @@ def run_ab_test(
     ci_bootstrap_resamples: int = 10_000,
     ci_random_state: int | None = 0,
 ) -> pd.DataFrame:
+    metrics_df = validate_metrics_config(metrics_df)
+    _check_required_columns(df, metrics_df)
     days_running = _days_elapsed(exp_start_date, exp_end_date)
     rows: list[dict[str, Any]] = []
 
@@ -640,7 +652,7 @@ def style_table_ab(
     styler = (
         df_result.style.set_table_attributes("style='display:inline'")
         .set_caption(cap)
-        .applymap(format_result, subset=["result"])
+        .map(format_result, subset=["result"])
         .background_gradient(subset=["rel_delta"], axis=0, cmap="RdYlGn")
         .format(
             "{:,.4f}",
