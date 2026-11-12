@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+
 
 def _safe_sheet_name(name: str, max_len: int = 31) -> str:
     bad = ["\\", "/", "*", "?", ":", "[", "]"]
@@ -24,7 +24,7 @@ def _autosize_worksheet(ws, min_width: int = 10, max_width: int = 48):
         for c in col_cells:
             try:
                 value = "" if c.value is None else str(c.value)
-            except Exception:
+            except (TypeError, ValueError, OverflowError):
                 value = ""
             max_len = max(max_len, len(value))
         ws.column_dimensions[get_column_letter(col_idx)].width = max(
@@ -167,13 +167,13 @@ def _fmt_num(x, decimals: int = 1) -> str:
 def _fmt_int(x) -> str:
     if pd.isna(x):
         return "н/д"
-    return f"{int(round(float(x))):,}".replace(",", " ")
+    return f"{round(float(x)):,}".replace(",", " ")
 
 
 def build_duration_manager_text(
     *,
-    mde_by_days_df: Optional[pd.DataFrame] = None,
-    days_for_target_mde_df: Optional[pd.DataFrame] = None,
+    mde_by_days_df: pd.DataFrame | None = None,
+    days_for_target_mde_df: pd.DataFrame | None = None,
     experiment_name: str | None = None,
     experiment_type: str | None = None,
     rollout_pct: float | None = None,
@@ -313,8 +313,8 @@ def _write_manager_summary_sheet(
 def export_duration_results_to_excel(
     output_path: str | Path,
     *,
-    mde_by_days_df: Optional[pd.DataFrame] = None,
-    days_for_target_mde_df: Optional[pd.DataFrame] = None,
+    mde_by_days_df: pd.DataFrame | None = None,
+    days_for_target_mde_df: pd.DataFrame | None = None,
     experiment_name: str | None = None,
     experiment_type: str | None = None,
     rollout_pct: float | None = None,

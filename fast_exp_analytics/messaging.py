@@ -6,6 +6,7 @@ from typing import Any
 
 import requests
 
+
 @dataclass
 class ChatSendConfig:
     api_base_url: str
@@ -23,7 +24,7 @@ def send_chat_message(*, config: ChatSendConfig, message: str, chat_id: str, fil
         resp = requests.post(url, data=payload, timeout=config.timeout)
         try:
             data = resp.json()
-        except Exception:
+        except ValueError:
             data = {"status_code": resp.status_code, "text": resp.text}
         if resp.status_code != 200:
             raise RuntimeError(f"Text send failed: {resp.status_code} {resp.text}")
@@ -40,7 +41,7 @@ def send_chat_message(*, config: ChatSendConfig, message: str, chat_id: str, fil
         resp = requests.post(url, data=payload, files=files, timeout=config.timeout)
     try:
         data = resp.json()
-    except Exception:
+    except ValueError:
         data = {"status_code": resp.status_code, "text": resp.text}
     if resp.status_code != 200:
         raise RuntimeError(f"File send failed: {resp.status_code} {resp.text}")

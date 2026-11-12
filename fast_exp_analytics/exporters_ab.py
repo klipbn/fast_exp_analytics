@@ -24,7 +24,7 @@ def _autosize_worksheet(ws, min_width: int = 10, max_width: int = 42):
         for c in col_cells:
             try:
                 value = "" if c.value is None else str(c.value)
-            except Exception:
+            except (TypeError, ValueError, OverflowError):
                 value = ""
             max_len = max(max_len, len(value))
         ws.column_dimensions[get_column_letter(col_idx)].width = max(

@@ -7,7 +7,7 @@ SRM, пересечения групп, описательная статист�
 
 from __future__ import annotations
 
-from typing import Callable, Mapping
+from collections.abc import Callable, Mapping
 
 import numpy as np
 import pandas as pd
@@ -93,11 +93,11 @@ def check_unit_overlap(
     ``n_units_in_multiple_groups > 0`` — сломана бакетизация или джойн.
     """
     groups_per_unit = df.groupby(unit_col)[group_col].nunique()
-    n_units = int(len(groups_per_unit))
+    n_units = len(groups_per_unit)
     n_multi = int((groups_per_unit > 1).sum())
     n_dup = int(df.duplicated(subset=[unit_col, group_col]).sum())
     return {
-        "n_rows": int(len(df)),
+        "n_rows": len(df),
         "n_units": n_units,
         "n_units_in_multiple_groups": n_multi,
         "share_units_in_multiple_groups": n_multi / n_units if n_units else np.nan,
@@ -162,7 +162,7 @@ def normality_report(values, max_shapiro_n: int = 5_000, random_state: int | Non
     """
     x = _clean(values)
     out = {
-        "n": int(len(x)),
+        "n": len(x),
         "skewness": np.nan,
         "excess_kurtosis": np.nan,
         "shapiro_p_value": np.nan,
@@ -356,7 +356,7 @@ def simulate_aa(
         raise ValueError("experiment_share must be in (0, 1)")
     fn = _resolve_test_callable(test)
     rng = np.random.default_rng(random_state)
-    n_exp = int(round(len(x) * experiment_share))
+    n_exp = round(len(x) * experiment_share)
     n_exp = min(max(n_exp, 2), len(x) - 2)
     p_values = np.empty(n_simulations)
     for i in range(n_simulations):
@@ -378,7 +378,7 @@ def simulate_aa(
         "ci_lower": float(ci_low),
         "ci_upper": float(ci_high),
         "alpha": alpha,
-        "n_simulations": int(len(finite)),
+        "n_simulations": len(finite),
         "p_values": p_values,
     }
     if is_null:

@@ -105,7 +105,7 @@ def test_cuped_missing_covariate_is_left_unadjusted_and_useless_covariate_is_har
     control, experiment = rng.normal(0, 1, 200), rng.normal(0, 1, 200)
     cov_c, cov_e = rng.normal(0, 1, 200), rng.normal(0, 1, 200)
     cov_c[:50] = np.nan
-    adj_c, adj_e, info = vr.cuped_adjust(control, cov_c, experiment, cov_e)
+    adj_c, _adj_e, info = vr.cuped_adjust(control, cov_c, experiment, cov_e)
 
     assert len(adj_c) == 200 and np.isfinite(adj_c).all()
     assert abs(info["variance_reduction"]) < 0.05

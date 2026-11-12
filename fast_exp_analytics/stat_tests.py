@@ -14,8 +14,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 from scipy import stats
@@ -684,7 +685,7 @@ def ratio_bootstrap_test(
         ci_lower=float(lo),
         ci_upper=float(hi),
         estimand="ratio_diff",
-        extra={"n_resamples": int(len(diffs)), "se": float(diffs.std(ddof=1))},
+        extra={"n_resamples": len(diffs), "se": float(diffs.std(ddof=1))},
     )
 
 

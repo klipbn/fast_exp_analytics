@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -89,7 +89,7 @@ def group_sequential_boundaries(
             else:
                 c = float(
                     optimize.brentq(
-                        lambda v: _exit_probability(v, *args) - inc, 0.0, _Z_CAP * 2, xtol=1e-10
+                        lambda v, args=args, inc=inc: _exit_probability(v, *args) - inc, 0.0, _Z_CAP * 2, xtol=1e-10
                     )
                 )
         boundaries.append(c)

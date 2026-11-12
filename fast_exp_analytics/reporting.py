@@ -17,7 +17,7 @@ METRIC_TYPE_LABELS = {
 def _is_nan(x) -> bool:
     try:
         return x is None or (isinstance(x, float) and (math.isnan(x) or math.isinf(x)))
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return True
 
 def _fmt_metric_type(metric_type: str) -> str:
@@ -72,9 +72,9 @@ def _fmt_days_more_human(x) -> str:
     if v <= 0:
         return "0д"
     if v <= 60:
-        return f"{int(round(v))}д"
+        return f"{round(v)}д"
     if v <= 365:
-        return f"~{int(round(v / 30))} мес"
+        return f"~{round(v / 30)} мес"
     return "слишком долго"
 
 def _pair_label(pair: str) -> str:
@@ -173,7 +173,7 @@ def build_abc_chat_message(
         days_cnt = (dt_to - dt_from).days + 1
         if days_cnt > 0:
             period_days_text = f" ({days_cnt} д.)"
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         period_days_text = ""
 
     period_text = f"{html.escape(date_from)} - {html.escape(date_to)}{period_days_text}"

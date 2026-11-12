@@ -23,7 +23,7 @@ def _is_nan(x) -> bool:
         if isinstance(x, (float, int, np.number)):
             return math.isnan(float(x)) or math.isinf(float(x))
         return bool(pd.isna(x))
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return True
 
 
@@ -104,12 +104,12 @@ def _fmt_days_more_human(x) -> str:
         if v <= 0:
             return "0д"
         if v <= 60:
-            return f"{int(round(v))}д"
+            return f"{round(v)}д"
         if v <= 365:
-            months = int(round(v / 30))
+            months = round(v / 30)
             return f"~{months} мес"
         return "слишком долго"
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return "н/д"
 
 
@@ -257,7 +257,7 @@ def build_ab_chat_message(
         days_cnt = (dt_to - dt_from).days + 1
         if days_cnt > 0:
             period_days_text = f" ({days_cnt} д.)"
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         period_days_text = ""
 
     period_text = f"{html.escape(str(date_from))} - {html.escape(str(date_to))}{period_days_text}"

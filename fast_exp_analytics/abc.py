@@ -91,7 +91,7 @@ def _build_pairs(groups, include_all_pairs: bool = True):
 def _is_finite(x) -> bool:
     try:
         return x is not None and np.isfinite(float(x))
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return False
 
 def _safe_div(a, b):
@@ -494,7 +494,7 @@ def _apply_pairwise_pvalue_adjustment(df_result, alpha=ALPHA, method="holm", gro
     df_result["is_significant_adj"] = df_result["p_value"] < alpha
     if method is None:
         return df_result
-    for _, idx in df_result.groupby(list(group_cols)).groups.items():
+    for idx in df_result.groupby(list(group_cols)).groups.values():
         idx = list(idx)
         pvals = df_result.loc[idx, "p_value"].values.astype(float)
         mask = np.isfinite(pvals)

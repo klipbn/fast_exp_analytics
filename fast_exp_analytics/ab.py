@@ -28,7 +28,7 @@ POWER = 0.80
 def _is_finite(x) -> bool:
     try:
         return x is not None and np.isfinite(float(x))
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
@@ -535,9 +535,7 @@ def calculate_stat(
     if _is_finite(p_value) and p_value < alpha and _is_finite(abs_delta_value):
         if (direction == "positive") and (abs_delta_value > 0):
             result = "positive"
-        elif (direction == "positive") and (abs_delta_value < 0):
-            result = "negative"
-        elif (direction == "negative") and (abs_delta_value > 0):
+        elif (direction == "positive") and (abs_delta_value < 0) or (direction == "negative") and (abs_delta_value > 0):
             result = "negative"
         elif (direction == "negative") and (abs_delta_value < 0):
             result = "positive"

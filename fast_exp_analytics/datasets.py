@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 import numpy as np
 import pandas as pd
+
 
 def make_synthetic_abc_dataset(n: int = 100_000, seed: int = 42) -> pd.DataFrame:
     rng = np.random.default_rng(seed)

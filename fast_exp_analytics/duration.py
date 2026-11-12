@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import math
-from typing import Mapping, Sequence
+from collections.abc import Mapping, Sequence
+
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
-
 
 DEFAULT_ALPHA = 0.05
 DEFAULT_POWER = 0.80
@@ -390,7 +390,7 @@ def mde_table_from_aggregated_df(
     rows: list[dict[str, float | int | str]] = []
 
     for T in days_list:
-        n_per_group = int(math.floor(eligible_per_day * T * smallest_share))
+        n_per_group = math.floor(eligible_per_day * T * smallest_share)
 
         row: dict[str, float | int | str] = {
             "% Выкатки": rollout * 100.0,
@@ -399,7 +399,7 @@ def mde_table_from_aggregated_df(
             "Число групп": len(shares),
         }
 
-        for _, (label, series) in series_map.items():
+        for label, series in series_map.values():
             row[label] = mde_rel_percent_from_series(
                 x=series,
                 n_per_group=n_per_group,
@@ -464,7 +464,7 @@ def required_days_from_aggregated_df(
             "Число групп": len(shares),
         }
 
-        for _, (label, series) in series_map.items():
+        for label, series in series_map.values():
             n_req = required_n_per_group_for_target_mde(
                 x=series,
                 target_mde_pct=target,

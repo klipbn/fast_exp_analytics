@@ -8,6 +8,7 @@ from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+
 def _safe_sheet_name(name: str, max_len: int = 31) -> str:
     for ch in ["\\", "/", "*", "?", ":", "[", "]"]:
         name = str(name).replace(ch, "_")
