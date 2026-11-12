@@ -78,7 +78,10 @@ def _fmt_days_more_human(x) -> str:
     return "слишком долго"
 
 def _pair_label(pair: str) -> str:
-    return {"A_vs_B": "A vs B", "A_vs_C": "A vs C", "B_vs_C": "B vs C"}.get(pair, str(pair))
+    known = {"A_vs_B": "A vs B", "A_vs_C": "A vs C", "B_vs_C": "B vs C"}
+    if pair in known:
+        return known[pair]
+    return str(pair).replace("_vs_", " vs ")
 
 def _safe_rel_delta_pct(row: pd.Series) -> float:
     rd = row.get("rel_delta")
@@ -125,6 +128,8 @@ def build_dashboard_url_abc(*, base_url: str, params: dict[str, str | int | list
             prepared[key] = str(value)
     return f"{base_url}?{urlencode(prepared, quote_via=quote, safe='')}"
 
+ABCD_PAIR_ORDER = ("A_vs_B", "A_vs_C", "A_vs_D", "B_vs_C", "B_vs_D", "C_vs_D")
+
 def build_abc_chat_message(
     df_result: pd.DataFrame,
     *,
@@ -136,7 +141,8 @@ def build_abc_chat_message(
     alpha: float = 0.05,
     p_adjust_method: str = "Holm",
     use_adjusted: bool = True,
-    pair_order: tuple[str, ...] = ("A_vs_B", "A_vs_C", "B_vs_C"),
+    pair_order: tuple[str, ...] | None = ("A_vs_B", "A_vs_C", "B_vs_C"),
+    test_label: str = "ABC",
     key_metrics: tuple[str, ...] = (
         "Списания",
         "Цели",
@@ -153,6 +159,12 @@ def build_abc_chat_message(
 ) -> str:
     df = df_result.copy()
 
+    if pair_order is None:
+        pair_order = tuple(df["pair"].drop_duplicates()) if "pair" in df.columns else ()
+    else:
+        known = set(df["pair"].drop_duplicates()) if "pair" in df.columns else set()
+        pair_order = tuple(p for p in pair_order if p in known)
+
     # считаем длительность периода включительно
     period_days_text = ""
     try:
@@ -168,7 +180,7 @@ def build_abc_chat_message(
 
     if df.empty:
         return (
-            f"<b>ABC тест: {html.escape(str(experiment_desc))}</b>\n"
+            f"<b>{html.escape(test_label)} тест: {html.escape(str(experiment_desc))}</b>\n"
             f"<b>Эксперимент:</b> {html.escape(str(exp_id))}\n"
             f"<b>Период:</b> {period_text}\n\n"
             f"Нет данных для отображения.\n\n🔎 Подробнее\n{dashboard_url}"
@@ -195,7 +207,7 @@ def build_abc_chat_message(
     df["__icon"] = df.apply(lambda r: _icon_for_row(r, alpha=alpha, use_adjusted=use_adjusted), axis=1)
 
     msg_lines = [
-        f"<b>ABC тест: {html.escape(str(experiment_desc))}</b>",
+        f"<b>{html.escape(test_label)} тест: {html.escape(str(experiment_desc))}</b>",
         f"<b>Эксперимент:</b> {html.escape(str(exp_id))}",
         f"<b>Период:</b> {period_text}",
         f"<b>Поправка:</b> {html.escape(str(p_adjust_method))}" if use_adjusted else "",
@@ -311,3 +323,48 @@ def build_abc_chat_message(
     msg = msg.replace("p_adj=<", "p_adj=&lt;").replace("p=<", "p=&lt;")
 
     return msg
+
+
+def build_abcd_chat_message(
+    df_result: pd.DataFrame,
+    *,
+    experiment_desc: str,
+    exp_id: str | int,
+    date_from: str,
+    date_to: str,
+    dashboard_url: str,
+    alpha: float = 0.05,
+    p_adjust_method: str = "Holm",
+    use_adjusted: bool = True,
+    key_metrics: tuple[str, ...] = (
+        "Списания",
+        "Цели",
+        "CPA",
+        "CTR",
+        "Конверсия в начавших тратить",
+        "Конверсия в создавших кампанию",
+        "Goals per day",
+        "Amount per day",
+    ),
+    max_metrics_per_pair: int = 5,
+    max_colored_extra_per_pair: int | None = 3,
+    show_days_more: bool = True,
+) -> str:
+    """Build a VK Teams chat message for an A/B/C/D test across all six pairs."""
+    return build_abc_chat_message(
+        df_result,
+        experiment_desc=experiment_desc,
+        exp_id=exp_id,
+        date_from=date_from,
+        date_to=date_to,
+        dashboard_url=dashboard_url,
+        alpha=alpha,
+        p_adjust_method=p_adjust_method,
+        use_adjusted=use_adjusted,
+        pair_order=ABCD_PAIR_ORDER,
+        test_label="ABCD",
+        key_metrics=key_metrics,
+        max_metrics_per_pair=max_metrics_per_pair,
+        max_colored_extra_per_pair=max_colored_extra_per_pair,
+        show_days_more=show_days_more,
+    )

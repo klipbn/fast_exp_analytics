@@ -2,7 +2,7 @@ English | [Русский](README_RU.md)
 
 # fast_exp_analytics
 
-**A Python toolkit for A/B and A/B/C experiment analysis: statistics, confidence intervals, MDE and duration planning, Excel reports, and chat-ready summaries — designed around analyst workflows in Jupyter.**
+**A Python toolkit for A/B, A/B/C and multi-group experiment analysis: statistics, confidence intervals, MDE and duration planning, Excel reports, and chat-ready summaries — designed around analyst workflows in Jupyter.**
 
 <p align="center">
   <a href="https://pypi.org/project/fast-exp-analytics/"><img src="https://img.shields.io/pypi/v/fast-exp-analytics.svg" alt="PyPI"></a>
@@ -20,7 +20,7 @@ Product analysts routinely repeat the same experiment loop: pull unit-level data
 
 1. Bring your own data — any unit-level `pandas.DataFrame` (SQL, ClickHouse, CSV — ingestion stays outside the library).
 2. Describe metrics once in a config `DataFrame`: name, type (`additive` / `average` / `ratio` / `share` / `median`), numerator, denominator, and which direction counts as an improvement.
-3. Run an A/B or A/B/C analysis and get p-values, confidence intervals, MDE, achieved power, and projected experiment duration for every metric.
+3. Run an A/B, A/B/C or A/B/C/D analysis and get p-values, confidence intervals, MDE, achieved power, and projected experiment duration for every metric.
 4. Render a styled notebook table, export a formatted Excel report, and generate a short HTML summary for a team chat.
 
 The same metric config drives all of it — statistics, tables, exports, and chat messages — so results are computed the same way every time.
@@ -29,7 +29,11 @@ The same metric config drives all of it — statistics, tables, exports, and cha
 
 - **Five metric types with statistics matched to each** — Welch's t-test for additive/average metrics, linearization for ratio metrics (CTR, CPA, CPM), a two-proportion z-test for shares, Mann–Whitney U for medians.
 - **Confidence intervals for every metric type** — Welch t-interval, delta method for ratios, Newcombe–Wilson for shares (correct at 0%/100%), reproducible BCa bootstrap for medians.
-- **A/B/C support out of the box** — all pairwise comparisons with Holm p-value correction and simultaneous (Bonferroni) confidence intervals.
+- **A/B/C, A/B/C/D and N groups out of the box** — all pairwise comparisons with Holm p-value correction and simultaneous (Bonferroni) confidence intervals, omnibus tests, and post-hoc procedures (Dunn, Tukey HSD, Games–Howell, Dunnett).
+- **A choice of test per metric** — about 30 criteria selectable in the metrics config: bootstrap, permutation, Yuen, Brunner–Munzel, Fisher, the delta method and more, plus TOST and non-inferiority.
+- **Variance reduction and heavy tails** — CUPED, pooled-threshold winsorization, post-stratification.
+- **Experiment health checks** — SRM, unit overlap and duplicates, a test recommendation from the data, A/A simulation on your own metric.
+- **Honest peeking** — group sequential boundaries (Lan–DeMets) and mSPRT with always-valid p-values and intervals.
 - **Decision-oriented output per metric** — MDE, achieved power, required sample size, and an estimate of how many more days the test needs to reach significance.
 - **Experiment duration planning** — aggregate raw daily history to any unit level, then estimate MDE for 7/14/21/28+ day runs or the number of days required for a target MDE, including unequal group splits and A/B vs A/B/C sensitivity.
 - **Presentation built in** — styled notebook tables, multi-sheet Excel reports with conditional formatting, HTML chat summaries with sign icons and key-metric prioritization.
@@ -57,7 +61,7 @@ The repository also ships a full example notebook and generated report files:
 
 | File | Description |
 |---|---|
-| [`examples/fast_exp_analytics_example.ipynb`](examples/fast_exp_analytics_example.ipynb) | End-to-end workflow: A/B, A/B/C, chat messages, Excel export, MDE and duration planning |
+| [`examples/fast_exp_analytics_example.ipynb`](examples/fast_exp_analytics_example.ipynb) | End-to-end workflow: A/B, A/B/C, A/B/C/D, chat messages, Excel export, MDE and duration planning, test selection, CUPED, diagnostics, sequential testing |
 | [`examples/report_ab_exp_id_4242.xlsx`](examples/report_ab_exp_id_4242.xlsx) | Example A/B Excel report |
 | [`examples/report_abc_id_4242.xlsx`](examples/report_abc_id_4242.xlsx) | Example A/B/C Excel report |
 | [`examples/duration_plan_ab.xlsx`](examples/duration_plan_ab.xlsx) | Example duration planning report |
@@ -197,6 +201,99 @@ Each metric is compared across all pairs (`A_vs_B`, `A_vs_C`, and optionally `B_
 </details>
 
 <details>
+<summary><strong>A/B/C/D and any number of groups</strong></summary>
+
+```python
+from fast_exp_analytics import (
+    make_synthetic_abcd_dataset, run_abcd_test, run_multigroup_test, run_omnibus_test,
+)
+
+df_abcd = make_synthetic_abcd_dataset(n=100_000, seed=42)
+
+run_omnibus_test(df_abcd, metrics_df)          # Welch ANOVA / Kruskal-Wallis / chi-square per metric
+result_abcd = run_abcd_test(df_abcd, metrics_df, "2026-03-17", "2026-03-24")   # all 6 pairs
+
+# any number of groups with any names; control-only comparisons give more power
+run_multigroup_test(
+    df_abcd, metrics_df, "2026-03-17", "2026-03-24", control="A", include_all_pairs=False,
+)
+```
+
+`run_abcd_test` compares all six pairs (or only control pairs with `include_all_pairs=False`). The Holm correction and Bonferroni intervals scale with the number of pairs. `run_omnibus_test` answers "is there any difference at all"; pairwise runs answer "which pairs differ". If the pairwise hypotheses are pre-planned, a significant omnibus test is not required first.
+
+</details>
+
+<details>
+<summary><strong>Choosing the test, CUPED and winsorization</strong></summary>
+
+Defaults are unchanged: `additive`/`average` use Welch, `ratio` uses linearization, `share` a two-proportion z-test, `median` Mann–Whitney. Three optional config columns change that per metric: `test`, `covariate` (CUPED) and `winsorize` (upper quantile, pooled threshold).
+
+```python
+import pandas as pd
+from fast_exp_analytics import available_tests, run_ab_test
+
+metrics_df = pd.DataFrame(
+    [
+        # desc, type, num, den, direction, test, covariate, winsorize
+        ["Amount", "average", "amount", "is_in_exp", "positive", None, "amount_pre", 0.99],
+        ["Amount (bootstrap)", "average", "amount", "is_in_exp", "positive", "bootstrap", None, None],
+        ["CTR", "ratio", "clicks", "shows", "positive", "delta", None, None],
+        ["CR to spend", "share", "is_with_spents", "is_in_exp", "positive", "fisher", None, None],
+    ],
+    index=["amount", "amount_boot", "ctr", "cr"],
+    columns=["desc", "type", "num", "den", "direction", "test", "covariate", "winsorize"],
+)
+
+result = run_ab_test(
+    df_ab, metrics_df, "2026-03-17", "2026-03-24",
+    extended=True,                 # + test_name, statistic, effect_size, rel_ci_*, delta_cuped, ...
+    metrics_adjust_method="holm",  # correction across metrics: p_value_adj, result_adj
+)
+available_tests()                  # allowed `test` values per metric type
+```
+
+| Metric type | `test` values |
+|---|---|
+| `additive`, `average` | `welch` (default), `student`, `ztest`, `yuen`, `bootstrap`, `permutation`, `mannwhitney`, `brunner_munzel`, `ks`, `cvm` |
+| `ratio` | `linearization` (default), `delta`, `bootstrap` |
+| `share` | `ztest` (default), `chi2`, `chi2_yates`, `g_test`, `fisher`, `boschloo`, `barnard` |
+| `median` | `mannwhitney` (default), `brunner_munzel`, `mood`, `bootstrap`, `permutation`, `ks`, `cvm` |
+| 3+ groups, additionally | `dunn` (`additive`/`average`/`median`), `tukey`, `games_howell`, `dunnett` (`additive`/`average`) |
+
+How to choose:
+
+- **A question about the mean** (money, counts per unit): `welch`. With a heavy tail and too small a sample (`n < 355 * skewness^2`) use `bootstrap` or `permutation` together with `winsorize` and CUPED. `recommend_test(control, experiment, metric_type)` applies this rule to your data.
+- **Rank tests** (`mannwhitney`, `brunner_munzel`, `dunn`) answer a question about the rank position of the distributions, not about means and not always about medians. The reported CI stays the interval for the metric delta.
+- **Shares**: `ztest`; with expected counts below 5 use `fisher`.
+- **CUPED** (`covariate`): the pre-experiment value of the metric. p-value, CI, MDE and power use adjusted values, point estimates stay raw; the adjusted delta is in `delta_cuped`.
+- `tukey`, `games_howell` and `dunnett` already control the family-wise error across pairs, so they are not corrected a second time.
+
+</details>
+
+<details>
+<summary><strong>Design checks, sequential testing, sample size</strong></summary>
+
+```python
+from fast_exp_analytics import (
+    check_unit_overlap, describe_groups, group_sequential_boundaries, msprt_sequence,
+    power, recommend_test, simulate_aa, srm_check_df,
+)
+
+srm_check_df(df_ab, expected_shares={"A": 0.5, "B": 0.5})   # is_srm=True -> do not trust the results
+check_unit_overlap(df_ab)                                   # units in several groups, duplicated rows
+describe_groups(df_ab, "amount")                            # quantiles, share of zeros, top-1% share
+simulate_aa(df_ab["amount"], test="welch")                  # empirical type I error on your own data
+
+group_sequential_boundaries([0.25, 0.5, 0.75, 1.0])         # boundaries for planned interim looks
+msprt_sequence(deltas, ses, tau=mde_abs)                    # always-valid p-values for daily peeking
+power.sample_size_proportions(0.10, mde_rel=0.05, n_comparisons=2)
+```
+
+Standalone modules: `stat_tests` (about 30 two-sample tests returning one `StatTestResult`), `multi_group` (omnibus and post-hoc procedures), `multiple_testing`, `effect_sizes`, `variance_reduction`, `diagnostics`, `sequential`, `bayesian`, `power`.
+
+</details>
+
+<details>
 <summary><strong>Experiment duration planning (MDE)</strong></summary>
 
 ```python
@@ -297,7 +394,9 @@ flowchart LR
 ```
 
 - **`config.py`** — validates the metric config (allowed types, directions, unique names) and provides a default metric set.
-- **`ab.py` / `abc.py`** — the statistical engine: per-metric-type preprocessing, tests, MDE/power/sample-size math, result tables. A/B/C adds pairwise comparisons and multiple-testing correction.
+- **`ab.py` / `abc.py`** — the statistical engine: per-metric-type preprocessing, tests, MDE/power/sample-size math, result tables. The multi-group engine adds pairwise comparisons and multiple-testing correction for any number of groups.
+- **`stat_tests.py` / `multi_group.py`** — the test library the engines dispatch to: two-sample criteria with a single result type, omnibus tests and post-hoc procedures.
+- **`variance_reduction.py` / `diagnostics.py` / `sequential.py` / `power.py` / `bayesian.py`** — standalone tools around the test: CUPED and winsorization, SRM and design checks, peeking-safe inference, sample size planning, Bayesian summaries.
 - **`confidence_intervals.py`** — one implementation of interval estimation shared by both engines.
 - **`reporting*.py`** — pure formatting: notebook tables, dashboard URL builders, HTML chat messages with icon and key-metric logic.
 - **`exporters*.py`** — Excel rendering (openpyxl): styled headers, number formats, conditional formatting, summary sheets.
@@ -314,6 +413,8 @@ flowchart LR
 | `share` | success share | Two-proportion z-test | Newcombe–Wilson (valid at 0% / 100%) |
 | `median` | median per unit | Mann–Whitney U | BCa bootstrap (reproducible seed) |
 
+These are the defaults; the `test` column of the metrics config selects an alternative per metric (see "Choosing the test, CUPED and winsorization"). For `additive` metrics the delta of sums is scaled to the control group size, so unequal group sizes do not show up as an effect.
+
 MDE and sample-size estimates use the standard two-sample formula with the harmonic mean of group sizes; ratio MDE is expressed relative to the control denominator mean.
 
 ## Example output
@@ -322,14 +423,14 @@ MDE and sample-size estimates use the standard two-sample formula with the harmo
 
 | metric_name | value_base | value_exp | rel_delta | p_value | result | ci_lower | ci_upper |
 |---|---:|---:|---:|---:|---|---:|---:|
-| Amount | 1 614 609 | 8 153 601 | +405.0% | <0.0001 | positive | 190.25 | 204.09 |
+| Amount | 1 614 609 | 8 153 601 | +401.9% | <0.0001 | positive | 190.25 | 204.09 |
 | CPA | 34.21 | 171.58 | +401.6% | <0.0001 | negative | 129.10 | 145.63 |
 | CTR | 4.969% | 5.010% | +0.8% | 0.7796 | neutral | -0.0024 | 0.0032 |
 
 `build_ab_chat_message` renders (HTML, shown as it appears in the chat client):
 
 ```text
-🟢 Amount (абс.): 1,61M → 8,15M | Δ 405,0% | p=<0,0001
+🟢 Amount (абс.): 1,61M → 8,15M | Δ 401,9% | p=<0,0001
 🔴 CPA (отн.): 34,21 → 171,58 | Δ 401,6% | p=<0,0001
 ⚪ CTR (отн.): 4,969% → 5,010% | Δ 0,8% | p=0,7796
 ```
@@ -341,7 +442,16 @@ Icons encode the verdict: 🟢 significant improvement, 🔴 significant degrada
 ```text
 fast_exp_analytics/          # library package
 ├── ab.py                    # A/B statistical engine
-├── abc.py                   # A/B/C engine: pairwise tests + multiple-testing correction
+├── abc.py                   # multi-group engine: A/B/C, A/B/C/D, N groups, omnibus tests
+├── stat_tests.py            # two-sample tests + per-metric-type dispatcher
+├── multi_group.py           # omnibus tests and post-hoc procedures for 3+ groups
+├── multiple_testing.py      # FWER / FDR p-value adjustments
+├── effect_sizes.py          # effect sizes, relative-lift confidence intervals
+├── variance_reduction.py    # CUPED, winsorization, post-stratification
+├── diagnostics.py           # SRM, design checks, test recommendation, A/A simulation
+├── sequential.py            # group sequential boundaries, mSPRT
+├── bayesian.py              # probability to win, expected loss
+├── power.py                 # sample size, MDE, power
 ├── confidence_intervals.py  # CI methods shared by both engines
 ├── config.py                # metrics config validation + defaults
 ├── datasets.py              # synthetic data generator for demos/tests
@@ -388,7 +498,7 @@ cp .env.example .env   # then fill in only what you use
 pytest
 ```
 
-The suite covers the confidence interval formulas against reference computations, all metric types end-to-end through `run_ab_test` / `run_abc_test`, ABC correction behavior, Excel column placement, config validation, duration planning math, and chat message formatting.
+The suite covers the confidence interval formulas against reference computations, every two-sample and post-hoc test against scipy / statsmodels references, group sequential boundaries against published tables, mSPRT type I error under continuous peeking, all metric types end-to-end through `run_ab_test` / `run_abc_test` / `run_abcd_test`, CUPED and winsorization in the pipeline, ABC correction behavior, Excel column placement, config validation, duration planning math, and chat message formatting.
 
 ## Development
 
@@ -414,8 +524,10 @@ CI runs lint and tests on Python 3.10, 3.11, and 3.12.
 - Median metrics get a Mann–Whitney U p-value but no MDE/power estimates (reported as NaN).
 - Share metrics use binary success semantics: any `num > 0` counts as a success.
 - Built-in message templates and default metric labels are Russian-oriented; key metrics can be overridden via parameters, but templates are not yet localized.
-- No sequential-testing or variance-reduction methods (CUPED) yet.
-- A/B/C comparisons are pairwise between three groups (`A/B/C`); more groups require a code extension.
+- CUPED and winsorization are wired into the pipeline for `additive` and `average` metrics only; for other types use `variance_reduction` directly.
+- With rank tests the reported confidence interval is still the interval for the metric delta, so it can disagree with the p-value.
+- `power_now` is power at the observed effect; it carries no information beyond the p-value.
+- Docstrings of the newer modules are in Russian.
 
 ## Roadmap
 
@@ -425,7 +537,10 @@ CI runs lint and tests on Python 3.10, 3.11, and 3.12.
 - [x] Excel / notebook / chat reporting
 - [ ] Localizable message templates (English defaults)
 - [ ] Configurable unit ID column
-- [ ] CUPED / pre-experiment variance reduction
+- [x] CUPED / pre-experiment variance reduction
+- [x] Test selection per metric, post-hoc procedures for 3+ groups
+- [x] Sequential testing (group sequential, mSPRT)
+- [ ] English docstrings for the newer modules
 
 ## License
 

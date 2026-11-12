@@ -2,18 +2,45 @@
 
 All notable changes to this project should be documented in this file
 
-## [Unreleased]
+## [0.3.0] - 2026-11-12
 
 ### Added
 
+- `stat_tests`: a library of two-sample tests returning a single `StatTestResult` — Welch, Student, z-test, Yuen (trimmed means), bootstrap (mean / median / quantile), permutation, Mann–Whitney, Brunner–Munzel, Kolmogorov–Smirnov, Cramér–von Mises, Mood; proportions — z-test, chi-square (with and without Yates), G-test, Fisher, Boschloo, Barnard; ratio metrics — delta method, linearization, unit-level bootstrap; paired samples — paired t, Wilcoxon, sign test, McNemar; TOST and non-inferiority; Poisson rate test
+- `multi_group`: omnibus tests (ANOVA, Welch ANOVA, Kruskal–Wallis, chi-square homogeneity, Levene / Brown–Forsythe, Friedman) and post-hoc procedures — Dunn (tie-corrected, with pre-planned pairs), Tukey HSD, Games–Howell, Dunnett
+- `multiple_testing.adjust_pvalues`: Bonferroni, Sidak, Holm, Holm–Sidak, Hochberg, Hommel, Benjamini–Hochberg, Benjamini–Yekutieli
+- `effect_sizes`: Cohen's d, Hedges' g, Glass's delta, Cliff's delta, Vargha–Delaney A, Cohen's h, relative-lift confidence intervals (delta method and Fieller)
+- `variance_reduction`: CUPED (`cuped_adjust`, `add_cuped_column`), pooled-threshold winsorization, post-stratification
+- `diagnostics`: SRM (`srm_check`, `srm_check_df`), unit overlap and duplicate checks, per-group descriptive statistics, normality report, test recommendation (`recommend_test`), A/A and A/B simulation (`simulate_aa`)
+- `sequential`: group sequential boundaries (Lan–DeMets: O'Brien–Fleming, Pocock) and mSPRT with always-valid p-values and confidence intervals
+- `bayesian`: Beta-Binomial for proportions and a normal approximation for means — probability to win, expected loss
+- `power`: sample size, MDE and power for means, proportions and ratio metrics (unequal groups, one-sided alternative, correction for the number of comparisons)
+- A/B/C/D experiments: `run_abcd_test` compares all six pairs (`include_all_pairs=False` keeps control pairs only), with `style_table_abcd`, `make_synthetic_abcd_dataset`, `export_abcd_results_to_excel`, `build_abcd_chat_message`
+- `run_multigroup_test` for any number and naming of groups; `run_omnibus_test` for a per-metric omnibus test
+- Optional metrics config columns in `run_ab_test` / `run_abc_test` / `run_abcd_test`: `test` (a test instead of the default), `covariate` (CUPED), `winsorize` (upper quantile)
+- `extended=True` appends `EXTENDED_COLUMNS`: test name, statistic, effect size, relative-lift CI, CUPED delta and variance reduction, winsorization threshold
+- `run_ab_test(metrics_adjust_method=...)`: multiple-testing correction across metrics (`p_value_adj`, `result_adj`)
 - `run_ab_test` now validates the metrics config and input columns up front and raises a descriptive `ValueError` for missing columns (previously an opaque pandas `KeyError`), matching the existing ABC behavior
-- Tests for config validation, duration planning, reporting/message formatting and the new input validation
+- Tests: every test checked against scipy / statsmodels references, group sequential boundaries against published tables, mSPRT type I error under continuous peeking, pipeline options, config validation, duration planning, reporting
+- Example notebook: A/B/C/D section and a section on test selection, CUPED, diagnostics, sequential testing, Bayesian summaries and sample size
+
+### Fixed
+
+- `additive` metrics: `abs_delta` and `rel_delta` were computed as the difference of raw sums, so with unequal group sizes they reflected the size difference rather than the effect (the sign could disagree with the difference in means the p-value is based on, giving a wrong `result`). The experiment sum is now scaled to the control size (`n_control / n_experiment`); `value_base` and `value_exp` remain raw sums. Values are unchanged for equal groups
+- ABC / ABCD: a zero delta with a significant p-value (for example a rank test with equal medians) was labelled `negative`; it is now `neutral`, as in AB
+- Excel export (AB and ABC / ABCD): `power_now` (a fraction between 0 and 1) was written with the `0.0"%"` format and showed 0.8 as "0.8%"; it now uses a percent format (80.0%)
+- `run_ab_test`: metric type and direction are lower-cased, as in ABC
 
 ### Changed
 
+- Without the new columns and parameters the results of `run_ab_test` and `run_abc_test` are identical to 0.1.50, except for the fixes above
+- The pairwise engine in `abc.py` is generalized to any number of groups; `run_abc_test` keeps its behavior and signature
+- `build_abc_chat_message`: the pair order is derived from the data, a `test_label` parameter sets the message title
+- Excel export creates a sheet per pair found in the result
+- `pvalue_adjust_method` accepts short aliases (`bh`, `by`, `hochberg`)
+- Synthetic datasets gained an `amount_pre` column (pre-experiment spend) for CUPED demos
 - Replaced the deprecated `Styler.applymap` with `Styler.map` in `style_table_ab` (pandas requirement raised to `>=2.1`); removes a `FutureWarning` on modern pandas
-- Removed unused imports
-- Cleaned up `.gitignore` and package metadata (keywords, classifiers, issues URL)
+- Removed unused imports; cleaned up `.gitignore` and package metadata (keywords, classifiers, issues URL)
 
 ## [0.1.50] - 2026-08-18
 

@@ -3,12 +3,23 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from scipy import stats
-from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.proportion import proportions_ztest
 from statsmodels.stats.weightstats import CompareMeans, DescrStatsW
 
-from .confidence_intervals import metric_confidence_interval
+from ._extensions import (
+    EXTENDED_COLUMNS,
+    build_metric_frame,
+    cuped_stat_frames,
+    extended_stats,
+    metric_options,
+    resolve_inference,
+    validate_metric_options,
+    winsorize_metric_frame,
+)
 from .config import validate_metrics_config
+from .multi_group import chi2_homogeneity_test, omnibus_test, posthoc_test
+from .multiple_testing import adjust_pvalues
+from .stat_tests import JOINT_POSTHOC_TESTS
 
 ALPHA = 0.05
 POWER = 0.80
@@ -45,6 +56,38 @@ AGGREGATE_COLUMN_NAMES_ABC = [
     "ci_upper",
 ]
 
+AGGREGATE_COLUMN_NAMES_ABCD = AGGREGATE_COLUMN_NAMES_ABC
+
+_ABCD_GROUPS = ("A", "B", "C", "D")
+
+_PAIR_HIGHLIGHT_STYLES = [
+    "background-color: rgba(40, 120, 240, 0.10); border-top: 2px solid #1e3a8a;",
+    "background-color: rgba(40, 240, 120, 0.08); border-top: 2px solid #166534;",
+    "background-color: rgba(240, 200, 40, 0.08); border-top: 2px solid #92400e;",
+    "background-color: rgba(160, 100, 240, 0.10); border-top: 2px solid #5b21b6;",
+    "background-color: rgba(240, 120, 120, 0.08); border-top: 2px solid #9f1239;",
+    "background-color: rgba(100, 200, 230, 0.08); border-top: 2px solid #155e75;",
+]
+
+def _build_pairs(groups, include_all_pairs: bool = True):
+    """Build pairwise comparison tuples (group_base, group_exp, pair_name).
+
+    The first group is treated as control: it is always compared with every
+    other group. Remaining pairs (B vs C, ...) are added only when
+    ``include_all_pairs`` is True.
+    """
+    groups = list(groups)
+    if len(groups) < 2:
+        raise ValueError("At least two experiment groups are required")
+    pairs = [(groups[0], g, f"{groups[0]}_vs_{g}") for g in groups[1:]]
+    if include_all_pairs:
+        pairs.extend(
+            (groups[i], groups[j], f"{groups[i]}_vs_{groups[j]}")
+            for i in range(1, len(groups))
+            for j in range(i + 1, len(groups))
+        )
+    return pairs
+
 def _is_finite(x) -> bool:
     try:
         return x is not None and np.isfinite(float(x))
@@ -69,19 +112,6 @@ def _harmonic_mean_n(n1, n2):
         return np.nan
     return float(2 / (1 / n1 + 1 / n2))
 
-def _welch_df(std_c, n_c, std_t, n_t):
-    """Welch-Satterthwaite degrees of freedom for a two-sample t-interval."""
-    if not _is_finite(std_c) or not _is_finite(std_t) or n_c <= 1 or n_t <= 1:
-        return np.nan
-    v_c = float(std_c) ** 2 / n_c
-    v_t = float(std_t) ** 2 / n_t
-    num = (v_c + v_t) ** 2
-    den = (v_c**2) / (n_c - 1) + (v_t**2) / (n_t - 1)
-    if den == 0:
-        return np.nan
-    return float(num / den)
-
-
 def _days_to_reach_required_n(n_current, n_required, days_running):
     if not _is_finite(n_required) or n_required <= 0:
         return np.nan
@@ -94,13 +124,28 @@ def _days_to_reach_required_n(n_current, n_required, days_running):
         return np.nan
     return int(np.ceil((n_required - n_current) / rate_per_day))
 
+
+def _welch_df(std_c, n_c, std_t, n_t):
+    """Welch-Satterthwaite degrees of freedom for two-sample t-interval."""
+    if not _is_finite(std_c) or not _is_finite(std_t) or n_c <= 1 or n_t <= 1:
+        return np.nan
+    v_c = float(std_c) ** 2 / n_c
+    v_t = float(std_t) ** 2 / n_t
+    num = (v_c + v_t) ** 2
+    den = (v_c ** 2) / (n_c - 1) + (v_t ** 2) / (n_t - 1)
+    if den == 0:
+        return np.nan
+    return float(num / den)
+
+
 def _prep_metric_pair_frames(df_metric, group_ctrl="A", group_tst="B", metric_type="additive"):
     df_metric = df_metric.copy()
     for col in ["num", "den"]:
         df_metric[col] = pd.to_numeric(df_metric[col], errors="coerce").replace([np.inf, -np.inf], np.nan)
 
-    df_ctrl = df_metric.loc[df_metric["exp_group"] == group_ctrl, ["user_id", "num", "den"]].copy()
-    df_tst = df_metric.loc[df_metric["exp_group"] == group_tst, ["user_id", "num", "den"]].copy()
+    cols = ["user_id", "num", "den"] + (["cov"] if "cov" in df_metric.columns else [])
+    df_ctrl = df_metric.loc[df_metric["exp_group"] == group_ctrl, cols].copy()
+    df_tst = df_metric.loc[df_metric["exp_group"] == group_tst, cols].copy()
 
     if metric_type == "additive":
         df_ctrl["value"] = df_ctrl["num"]
@@ -241,6 +286,22 @@ def _power_for_delta(df_control_metrics, df_pilot_metrics, metric_type, observed
         z_eff = abs(float(observed_delta)) / se
     return float(1 - stats.norm.cdf(z_alpha - z_eff) + stats.norm.cdf(-z_alpha - z_eff))
 
+def _additive_scaled_delta(df_control_metrics, df_pilot_metrics, base_value, exp_value):
+    """Дельта сумм additive-метрики, приведённая к размеру контрольной группы.
+
+    Суммы зависят от числа юнитов: при неравных группах сырая разница сумм
+    показывает разницу размеров, а не эффект, и может иметь другой знак, чем
+    разница средних, по которой считается p-value. Сумма эксперимента
+    масштабируется на ``n_control / n_experiment``; при равных группах
+    результат совпадает с простой разницей сумм.
+    """
+    n_c = int(df_control_metrics["value"].notna().sum())
+    n_e = int(df_pilot_metrics["value"].notna().sum())
+    if n_c == 0 or n_e == 0 or not _is_finite(base_value) or not _is_finite(exp_value):
+        return np.nan
+    return float(exp_value) * n_c / n_e - float(base_value)
+
+
 def calculate_base_exp_values(df_control_metrics, df_pilot_metrics, metric_type):
     if metric_type == "additive":
         base_value = df_control_metrics["value"].sum()
@@ -259,7 +320,10 @@ def calculate_base_exp_values(df_control_metrics, df_pilot_metrics, metric_type)
         _, _, exp_value = _share_success_obs(df_pilot_metrics)
     else:
         raise ValueError(f"Unsupported metric type: {metric_type}")
-    abs_delta_value = exp_value - base_value if _is_finite(base_value) and _is_finite(exp_value) else np.nan
+    if metric_type == "additive":
+        abs_delta_value = _additive_scaled_delta(df_control_metrics, df_pilot_metrics, base_value, exp_value)
+    else:
+        abs_delta_value = exp_value - base_value if _is_finite(base_value) and _is_finite(exp_value) else np.nan
     rel_delta_value = _safe_div(abs_delta_value, base_value)
     return base_value, exp_value, abs_delta_value, rel_delta_value
 
@@ -314,44 +378,79 @@ def calculate_stat_pair(
     ci_alpha: float | None = None,
     ci_bootstrap_resamples: int = 10_000,
     ci_random_state: int | None = 0,
+    test: str | None = None,
+    extended: bool = False,
+    override: dict | None = None,
 ):
+    """Посчитать строку результата для одной пары групп.
+
+    ``test`` — критерий вместо дефолтного; ``override`` — готовые p-value/CI от
+    совместной post-hoc процедуры (Dunn, Tukey, Games—Howell, Dunnett). При
+    наличии колонки ``cov`` инференс идёт по CUPED-скорректированным значениям.
+    """
+    stat_control, stat_pilot = df_control_metrics, df_pilot_metrics
+    cuped_info = {"delta_cuped": np.nan, "variance_reduction": np.nan}
+    if "cov" in df_control_metrics.columns and metric_type in ("additive", "average"):
+        stat_control, stat_pilot, cuped_info = cuped_stat_frames(df_control_metrics, df_pilot_metrics)
+
     base_value, exp_value, abs_delta_value, rel_delta_value = calculate_base_exp_values(df_control_metrics, df_pilot_metrics, metric_type)
     avg_base_value, avg_exp_value, avg_abs_delta, avg_rel_delta = calculate_avg_base_exp_values(df_control_metrics, df_pilot_metrics, metric_type)
-    mde, effect = calculate_mde(df_control_metrics, df_pilot_metrics, metric_type, alpha, power)
+    mde, effect = calculate_mde(stat_control, stat_pilot, metric_type, alpha, power)
     number_samples, n_base, n_exp = calculate_number_samples(df_control_metrics, df_pilot_metrics)
-    p_value = calculate_p_value(df_control_metrics, df_pilot_metrics, metric_type)
-
-    ci_lower, ci_upper = metric_confidence_interval(
-        df_control_metrics,
-        df_pilot_metrics,
+    inference = resolve_inference(
+        stat_control,
+        stat_pilot,
         metric_type,
+        test,
         alpha if ci_alpha is None else ci_alpha,
         ci_bootstrap_resamples,
         ci_random_state,
+        calculate_p_value,
+        need_statistic=extended,
+        override=override,
     )
+    p_value = inference["p_value"]
 
     if metric_type in ["additive", "average"]:
         observed_delta = avg_abs_delta
+        if _is_finite(cuped_info["delta_cuped"]):
+            observed_delta = cuped_info["delta_cuped"]
     elif metric_type in ["ratio", "share"]:
         observed_delta = abs_delta_value
     else:
         observed_delta = np.nan
 
-    n_required_per_group = _required_n_per_group_for_observed_delta(df_control_metrics, df_pilot_metrics, metric_type, observed_delta, alpha, power)
-    power_now = _power_for_delta(df_control_metrics, df_pilot_metrics, metric_type, observed_delta=observed_delta, alpha=alpha)
+    n_required_per_group = _required_n_per_group_for_observed_delta(stat_control, stat_pilot, metric_type, observed_delta, alpha, power)
+    power_now = _power_for_delta(stat_control, stat_pilot, metric_type, observed_delta=observed_delta, alpha=alpha)
     days_more_base = _days_to_reach_required_n(n_base, n_required_per_group, days_running)
     days_more_exp = _days_to_reach_required_n(n_exp, n_required_per_group, days_running)
     vals = [x for x in [days_more_base, days_more_exp] if _is_finite(x)]
     days_more_if_same_delta = int(max(vals)) if vals else np.nan
 
-    result = "neutral"
-    if _is_finite(p_value) and p_value < alpha and _is_finite(abs_delta_value):
-        if direction == "positive":
-            result = "positive" if abs_delta_value > 0 else "negative"
-        elif direction == "negative":
-            result = "negative" if abs_delta_value > 0 else "positive"
+    result = _result_label(p_value, abs_delta_value, direction, alpha)
+
+    ci_lower, ci_upper = inference["ci_lower"], inference["ci_upper"]
+
+    extra = {
+        "test_name": inference["test_name"],
+        "statistic": inference["statistic"],
+        "delta_cuped": cuped_info["delta_cuped"],
+        "cuped_variance_reduction": cuped_info["variance_reduction"],
+    }
+    if extended:
+        extra.update(
+            extended_stats(
+                df_control_metrics,
+                df_pilot_metrics,
+                stat_control,
+                stat_pilot,
+                metric_type,
+                alpha if ci_alpha is None else ci_alpha,
+            )
+        )
 
     return {
+        **extra,
         "value_base": base_value,
         "value_exp": exp_value,
         "abs_delta": abs_delta_value,
@@ -376,6 +475,19 @@ def calculate_stat_pair(
         "ci_upper": ci_upper,
     }
 
+def _result_label(p_value, abs_delta, direction, alpha) -> str:
+    """Итог метрики: значимость + знак дельты + направление улучшения.
+
+    Нулевая дельта даёт ``neutral`` даже при значимом p-value (например,
+    ранговый тест при равных медианах): направление изменения не определено.
+    """
+    if not (_is_finite(p_value) and p_value < alpha and _is_finite(abs_delta)):
+        return "neutral"
+    if abs_delta == 0 or direction not in ("positive", "negative"):
+        return "neutral"
+    improved = (abs_delta > 0) == (direction == "positive")
+    return "positive" if improved else "negative"
+
 def _apply_pairwise_pvalue_adjustment(df_result, alpha=ALPHA, method="holm", group_cols=("metric_name",)):
     df_result = df_result.copy()
     df_result["p_value_adj"] = df_result["p_value"]
@@ -388,11 +500,7 @@ def _apply_pairwise_pvalue_adjustment(df_result, alpha=ALPHA, method="holm", gro
         mask = np.isfinite(pvals)
         if mask.sum() == 0:
             continue
-        corrected = multipletests(pvals[mask], alpha=alpha, method=method)
-        pvals_adj = np.full_like(pvals, fill_value=np.nan, dtype=float)
-        sig_adj = np.full_like(mask, fill_value=False, dtype=bool)
-        pvals_adj[mask] = corrected[1]
-        sig_adj[mask] = corrected[0]
+        pvals_adj, sig_adj = adjust_pvalues(pvals, method=method, alpha=alpha)
         df_result.loc[idx, "p_value_adj"] = pvals_adj
         df_result.loc[idx, "is_significant_adj"] = sig_adj
     return df_result
@@ -404,13 +512,7 @@ def _recompute_result_by_adjusted_p(df_result, alpha=ALPHA):
         p = row.get("p_value_adj", np.nan)
         delta = row.get("abs_delta", np.nan)
         direction = row.get("direction", None)
-        res = "neutral"
-        if _is_finite(p) and p < alpha and _is_finite(delta):
-            if direction == "positive":
-                res = "positive" if delta > 0 else "negative"
-            elif direction == "negative":
-                res = "negative" if delta > 0 else "positive"
-        results_adj.append(res)
+        results_adj.append(_result_label(p, delta, direction, alpha))
     df_result["result_adj"] = results_adj
     return df_result
 
@@ -423,28 +525,26 @@ def _check_required_columns(df: pd.DataFrame, metrics_df: pd.DataFrame):
     if missing:
         raise ValueError(f"Input data is missing required columns: {missing}")
 
-def run_abc_test(
+def _run_multi_group_test(
     df: pd.DataFrame,
     metrics_df: pd.DataFrame,
     exp_start_date,
     exp_end_date,
-    include_bc: bool = True,
+    pairs,
     alpha: float = ALPHA,
     power: float = POWER,
     pvalue_adjust_method: str | None = "holm",
     ci_bootstrap_resamples: int = 10_000,
     ci_random_state: int | None = 0,
+    extended: bool = False,
 ) -> pd.DataFrame:
     metrics_df = validate_metrics_config(metrics_df)
+    validate_metric_options(metrics_df, multi_group=True)
     _check_required_columns(df, metrics_df)
     days_running = _days_elapsed(exp_start_date, exp_end_date)
 
-    pairs = [("A", "B", "A_vs_B"), ("A", "C", "A_vs_C")]
-    if include_bc:
-        pairs.append(("B", "C", "B_vs_C"))
-
-    # Simultaneous CIs: Bonferroni correction across the compared pairs.
     ci_alpha = alpha / len(pairs)
+    groups = _groups_from_pairs(pairs)
 
     rows = []
     for metric in metrics_df.index:
@@ -453,12 +553,15 @@ def run_abc_test(
         metric_direction = str(metrics_df.loc[metric, "direction"]).lower()
         num = metrics_df.loc[metric, "num"]
         den = metrics_df.loc[metric, "den"]
+        options = metric_options(metrics_df, metric)
+        test = options["test"]
 
-        if num != den:
-            df_metric = df[["user_id", "exp_group", num, den]].rename(columns={num: "num", den: "den"}).copy()
-        else:
-            df_metric = df[["user_id", "exp_group", num]].rename(columns={num: "num"}).copy()
-            df_metric["den"] = 1.0
+        df_metric = build_metric_frame(df, num, den, options["covariate"])
+        winsorize_threshold = np.nan
+        if options["winsorize"] is not None:
+            df_metric, winsorize_threshold = winsorize_metric_frame(df_metric, metric_type, options["winsorize"], groups)
+
+        joint = _joint_posthoc_overrides(df_metric, groups, pairs, metric_type, test, ci_alpha) if test in JOINT_POSTHOC_TESTS else None
 
         for group_base, group_exp, pair_name in pairs:
             df_control_metrics, df_pilot_metrics = _prep_metric_pair_frames(df_metric, group_base, group_exp, metric_type)
@@ -473,6 +576,9 @@ def run_abc_test(
                 ci_alpha,
                 ci_bootstrap_resamples,
                 ci_random_state,
+                test=None if joint is not None else test,
+                extended=extended,
+                override=None if joint is None else joint[(group_base, group_exp)],
             )
             rows.append({
                 "metric_name": metric_name,
@@ -481,14 +587,259 @@ def run_abc_test(
                 "group_base": group_base,
                 "group_exp": group_exp,
                 "direction": metric_direction,
+                "winsorize_threshold": winsorize_threshold,
+                "_p_is_adjusted": test in _SELF_ADJUSTED_POSTHOC_TESTS,
                 **stat_row,
             })
 
     df_result = pd.DataFrame(rows)
     df_result = _apply_pairwise_pvalue_adjustment(df_result, alpha=alpha, method=pvalue_adjust_method, group_cols=("metric_name",))
+    # Tukey / Games-Howell / Dunnett уже контролируют FWER по всем парам — повторно не корректируем
+    self_adjusted = df_result["_p_is_adjusted"].to_numpy(dtype=bool)
+    df_result.loc[self_adjusted, "p_value_adj"] = df_result.loc[self_adjusted, "p_value"]
     df_result = _recompute_result_by_adjusted_p(df_result, alpha=alpha)
-    df_result = df_result[AGGREGATE_COLUMN_NAMES_ABC].copy()
-    return df_result
+    columns = AGGREGATE_COLUMN_NAMES_ABC + (EXTENDED_COLUMNS if extended else [])
+    return df_result[columns].copy()
+
+
+_SELF_ADJUSTED_POSTHOC_TESTS = ("tukey", "games_howell", "dunnett")
+
+
+def _groups_from_pairs(pairs) -> list:
+    groups: list = []
+    for group_base, group_exp, _ in pairs:
+        for group in (group_base, group_exp):
+            if group not in groups:
+                groups.append(group)
+    return groups
+
+
+def _group_values(df_metric, groups, metric_type) -> dict:
+    """Значения метрики по группам (для типов, где ``value`` не зависит от пары)."""
+    return {
+        group: _prep_metric_pair_frames(df_metric, group, group, metric_type)[0]["value"].dropna().to_numpy(dtype=float)
+        for group in groups
+    }
+
+
+def _joint_posthoc_overrides(df_metric, groups, pairs, metric_type, test, ci_alpha) -> dict:
+    """p-value и CI совместной post-hoc процедуры для каждой пары групп."""
+    values = _group_values(df_metric, groups, metric_type)
+    pair_keys = [(group_base, group_exp) for group_base, group_exp, _ in pairs]
+    table = posthoc_test(values, test=test, alpha=ci_alpha * len(pairs), p_adjust=None, pairs=pair_keys)
+    found = {(row.group_base, row.group_exp): row for row in table.itertuples(index=False)}
+    overrides = {}
+    for key in pair_keys:
+        row = found.get(key)
+        overrides[key] = {
+            "test_name": test,
+            "p_value": float(row.p_value) if row is not None and _is_finite(row.p_value) else np.nan,
+            "statistic": float(row.statistic) if row is not None else np.nan,
+            "ci_lower": float(row.ci_lower) if row is not None else np.nan,
+            "ci_upper": float(row.ci_upper) if row is not None else np.nan,
+        }
+    return overrides
+
+
+def _resolve_groups(df: pd.DataFrame, groups, control) -> list:
+    if groups is None:
+        groups = sorted(pd.unique(df["exp_group"].dropna()))
+    groups = list(groups)
+    if len(set(groups)) != len(groups):
+        raise ValueError("groups must be unique")
+    if control is not None:
+        if control not in groups:
+            raise ValueError(f"Control group {control!r} is not in groups {groups}")
+        groups = [control] + [g for g in groups if g != control]
+    return groups
+
+
+def run_multigroup_test(
+    df: pd.DataFrame,
+    metrics_df: pd.DataFrame,
+    exp_start_date,
+    exp_end_date,
+    groups=None,
+    control=None,
+    include_all_pairs: bool = True,
+    alpha: float = ALPHA,
+    power: float = POWER,
+    pvalue_adjust_method: str | None = "holm",
+    ci_bootstrap_resamples: int = 10_000,
+    ci_random_state: int | None = 0,
+    extended: bool = False,
+) -> pd.DataFrame:
+    """Попарный тест для произвольного числа групп (2 и более).
+
+    ``groups`` — список групп (по умолчанию все значения ``exp_group`` по
+    алфавиту); ``control`` — контрольная группа (по умолчанию первая).
+    ``include_all_pairs=False`` оставляет только сравнения с контролем — меньше
+    проверок, выше мощность. Формат результата совпадает с ``run_abc_test``.
+    """
+    groups = _resolve_groups(df, groups, control)
+    pairs = _build_pairs(groups, include_all_pairs=include_all_pairs)
+    return _run_multi_group_test(
+        df,
+        metrics_df,
+        exp_start_date,
+        exp_end_date,
+        pairs,
+        alpha=alpha,
+        power=power,
+        pvalue_adjust_method=pvalue_adjust_method,
+        ci_bootstrap_resamples=ci_bootstrap_resamples,
+        ci_random_state=ci_random_state,
+        extended=extended,
+    )
+
+
+OMNIBUS_COLUMN_NAMES = [
+    "metric_name",
+    "metric_type",
+    "test",
+    "statistic",
+    "p_value",
+    "df",
+    "effect_size",
+    "effect_size_name",
+    "n_groups",
+    "number_samples",
+    "is_significant",
+]
+
+_DEFAULT_OMNIBUS_BY_TYPE = {
+    "additive": "welch_anova",
+    "average": "welch_anova",
+    "ratio": "welch_anova",
+    "median": "kruskal",
+    "share": "chi2",
+}
+
+
+def run_omnibus_test(
+    df: pd.DataFrame,
+    metrics_df: pd.DataFrame,
+    groups=None,
+    alpha: float = ALPHA,
+    numeric_test: str | None = None,
+) -> pd.DataFrame:
+    """Общий (omnibus) тест по каждой метрике: есть ли хоть одно различие между группами.
+
+    Дефолты: ``additive`` / ``average`` — Welch ANOVA; ``median`` —
+    Краскел—Уоллис; ``share`` — хи-квадрат однородности; ``ratio`` — Welch ANOVA
+    по значениям, линеаризованным общим (по всем группам) коэффициентом.
+    ``numeric_test`` (``anova``, ``welch_anova``, ``kruskal``) переопределяет
+    критерий для числовых метрик.
+
+    Omnibus-тест не говорит, какие именно группы различаются: для этого —
+    попарные сравнения ``run_abc_test`` / ``run_multigroup_test``. Если парные
+    гипотезы заданы заранее, значимый omnibus перед ними не обязателен.
+    """
+    metrics_df = validate_metrics_config(metrics_df)
+    _check_required_columns(df, metrics_df)
+    groups = _resolve_groups(df, groups, None)
+    if len(groups) < 2:
+        raise ValueError("At least two experiment groups are required")
+
+    rows = []
+    for metric in metrics_df.index:
+        metric_type = str(metrics_df.loc[metric, "type"]).lower()
+        df_metric = build_metric_frame(df, metrics_df.loc[metric, "num"], metrics_df.loc[metric, "den"])
+        df_metric = df_metric[df_metric["exp_group"].isin(groups)]
+
+        if metric_type == "share":
+            successes, totals = {}, {}
+            for group in groups:
+                frame = _prep_metric_pair_frames(df_metric, group, group, metric_type)[0]
+                successes[group], totals[group], _ = _share_success_obs(frame)
+            res = chi2_homogeneity_test(successes, totals)
+            n_total = int(sum(totals.values()))
+        else:
+            if metric_type == "ratio":
+                num = pd.to_numeric(df_metric["num"], errors="coerce").replace([np.inf, -np.inf], np.nan)
+                den = pd.to_numeric(df_metric["den"], errors="coerce").replace([np.inf, -np.inf], np.nan)
+                valid = num.notna() & den.notna()
+                den_sum = den[valid].sum()
+                coeff = num[valid].sum() / den_sum if den_sum != 0 else np.nan
+                linear = (num - coeff * den).where(valid)
+                values = {g: linear[df_metric["exp_group"] == g].dropna().to_numpy(dtype=float) for g in groups}
+            else:
+                values = _group_values(df_metric, groups, metric_type)
+            test = numeric_test or _DEFAULT_OMNIBUS_BY_TYPE[metric_type]
+            res = omnibus_test(values, test=test)
+            n_total = int(sum(len(v) for v in values.values()))
+
+        rows.append({
+            "metric_name": metrics_df.loc[metric, "desc"],
+            "metric_type": metric_type,
+            **res,
+            "n_groups": len(groups),
+            "number_samples": n_total,
+            "is_significant": bool(_is_finite(res["p_value"]) and res["p_value"] < alpha),
+        })
+    return pd.DataFrame(rows)[OMNIBUS_COLUMN_NAMES]
+
+def run_abc_test(
+    df: pd.DataFrame,
+    metrics_df: pd.DataFrame,
+    exp_start_date,
+    exp_end_date,
+    include_bc: bool = True,
+    alpha: float = ALPHA,
+    power: float = POWER,
+    pvalue_adjust_method: str | None = "holm",
+    ci_bootstrap_resamples: int = 10_000,
+    ci_random_state: int | None = 0,
+    extended: bool = False,
+) -> pd.DataFrame:
+    pairs = _build_pairs(("A", "B", "C"), include_all_pairs=include_bc)
+    return _run_multi_group_test(
+        df,
+        metrics_df,
+        exp_start_date,
+        exp_end_date,
+        pairs,
+        alpha=alpha,
+        power=power,
+        pvalue_adjust_method=pvalue_adjust_method,
+        ci_bootstrap_resamples=ci_bootstrap_resamples,
+        ci_random_state=ci_random_state,
+        extended=extended,
+    )
+
+def run_abcd_test(
+    df: pd.DataFrame,
+    metrics_df: pd.DataFrame,
+    exp_start_date,
+    exp_end_date,
+    include_all_pairs: bool = True,
+    alpha: float = ALPHA,
+    power: float = POWER,
+    pvalue_adjust_method: str | None = "holm",
+    ci_bootstrap_resamples: int = 10_000,
+    ci_random_state: int | None = 0,
+    extended: bool = False,
+) -> pd.DataFrame:
+    """Run an A/B/C/D test: pairwise comparisons across four groups.
+
+    With ``include_all_pairs=True`` (default) all six pairs are compared
+    (A vs B, A vs C, A vs D, B vs C, B vs D, C vs D); otherwise only the
+    three control-vs-treatment pairs (A vs B, A vs C, A vs D).
+    """
+    pairs = _build_pairs(_ABCD_GROUPS, include_all_pairs=include_all_pairs)
+    return _run_multi_group_test(
+        df,
+        metrics_df,
+        exp_start_date,
+        exp_end_date,
+        pairs,
+        alpha=alpha,
+        power=power,
+        pvalue_adjust_method=pvalue_adjust_method,
+        ci_bootstrap_resamples=ci_bootstrap_resamples,
+        ci_random_state=ci_random_state,
+        extended=extended,
+    )
 
 def format_result(val: str) -> str:
     if pd.isna(val):
@@ -502,19 +853,24 @@ def format_result(val: str) -> str:
 
 def highlight_pairs(row):
     pair = row.get("pair")
-    if pair == "A_vs_B":
-        return ["background-color: rgba(40, 120, 240, 0.10); border-top: 2px solid #1e3a8a;"] * len(row)
-    if pair == "A_vs_C":
-        return ["background-color: rgba(40, 240, 120, 0.08); border-top: 2px solid #166534;"] * len(row)
-    if pair == "B_vs_C":
-        return ["background-color: rgba(240, 200, 40, 0.08); border-top: 2px solid #92400e;"] * len(row)
-    return [""] * len(row)
+    pair_styles = {
+        "A_vs_B": _PAIR_HIGHLIGHT_STYLES[0],
+        "A_vs_C": _PAIR_HIGHLIGHT_STYLES[1],
+        "B_vs_C": _PAIR_HIGHLIGHT_STYLES[2],
+    }
+    style = pair_styles.get(pair)
+    return [style if style else ""] * len(row)
 
-def style_table_abc(df_result: pd.DataFrame, caption: str = ""):
+def _dynamic_highlight_pairs(row, pair_index: dict):
+    style = _PAIR_HIGHLIGHT_STYLES[pair_index.get(row.get("pair"), 0) % len(_PAIR_HIGHLIGHT_STYLES)]
+    return [style] * len(row)
+
+def _style_table_multi(df_result: pd.DataFrame, caption: str = ""):
+    pair_index = {pair: i for i, pair in enumerate(df_result["pair"].drop_duplicates())}
     styler = (
         df_result.style.set_table_attributes("style='display:inline'")
         .set_caption(caption)
-        .apply(highlight_pairs, axis=1)
+        .apply(_dynamic_highlight_pairs, pair_index=pair_index, axis=1)
         .map(format_result, subset=["result", "result_adj"])
         .background_gradient(subset=["rel_delta"], axis=0, cmap="RdYlGn")
         .format("{:,.4f}", subset=["value_base", "value_exp", "abs_delta", "mde", "avg_value_base", "avg_value_exp", "avg_abs_delta", "p_value", "p_value_adj", "power_now", "ci_lower", "ci_upper"])
@@ -523,3 +879,12 @@ def style_table_abc(df_result: pd.DataFrame, caption: str = ""):
         .format("{:.0f}", subset=["number_samples", "number_samples_base", "number_samples_exp", "days_more_if_same_delta", "days_more_base", "days_more_exp", "n_required_per_group"])
     )
     return styler
+
+def style_table_abc(df_result: pd.DataFrame, caption: str = ""):
+    return _style_table_multi(df_result, caption)
+
+def style_table_abcd(df_result: pd.DataFrame, caption: str = ""):
+    return _style_table_multi(df_result, caption)
+
+def style_table_multigroup(df_result: pd.DataFrame, caption: str = ""):
+    return _style_table_multi(df_result, caption)

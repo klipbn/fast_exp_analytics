@@ -42,11 +42,11 @@ def _apply_result_cell_style(cell, value):
         cell.font = Font(color="666666")
 
 def _apply_number_formats(ws, header_map: dict[str, int], n_rows: int):
-    percent_fraction = ["rel_delta"]
-    percent_plain = ["avg_rel_delta", "power_now"]
+    percent_fraction = ["rel_delta", "power_now"]
+    percent_plain = ["avg_rel_delta"]
     p_cols = ["p_value", "p_value_adj"]
     int_cols = ["number_samples", "number_samples_base", "number_samples_exp", "days_more_if_same_delta", "days_more_base", "days_more_exp", "n_required_per_group"]
-    decimal4_cols = ["value_base", "value_exp", "abs_delta", "mde", "avg_value_base", "avg_value_exp", "avg_abs_delta", "ci_lower", "ci_upper"]
+    decimal4_cols = ["value_base", "value_exp", "abs_delta", "mde", "avg_value_base", "avg_value_exp", "avg_abs_delta", "ci_lower", "ci_upper", "statistic", "effect_size", "rel_ci_lower", "rel_ci_upper", "delta_cuped", "cuped_variance_reduction", "winsorize_threshold"]
     for col in percent_fraction:
         if col in header_map:
             c = header_map[col]
@@ -133,7 +133,7 @@ def _build_summary_df(df_result_abc: pd.DataFrame) -> pd.DataFrame:
         rows.append({"pair": pair, "n_metrics": len(sub), "positive_cnt": cnt_pos, "negative_cnt": cnt_neg, "neutral_cnt": cnt_neu, "top_metrics": top_metrics})
     return pd.DataFrame(rows)
 
-def export_abc_results_to_excel(df_result_abc: pd.DataFrame, output_path: str | Path, *, experiment_desc: str | None = None, exp_id: str | int | None = None, date_from: str | None = None, date_to: str | None = None) -> str:
+def export_abc_results_to_excel(df_result_abc: pd.DataFrame, output_path: str | Path, *, experiment_desc: str | None = None, exp_id: str | int | None = None, date_from: str | None = None, date_to: str | None = None, all_metrics_title: str = "All ABC metrics") -> str:
     output_path = str(output_path)
     df = df_result_abc.copy()
     wb = Workbook()
@@ -153,10 +153,10 @@ def export_abc_results_to_excel(df_result_abc: pd.DataFrame, output_path: str | 
     _autosize_worksheet(ws_summary)
 
     ws_all = wb.create_sheet("all_metrics")
-    _write_df_to_sheet(ws_all, df, title=("All ABC metrics" + (f" - {experiment_desc}" if experiment_desc else "")))
+    _write_df_to_sheet(ws_all, df, title=(all_metrics_title + (f" - {experiment_desc}" if experiment_desc else "")))
 
     if "pair" in df.columns:
-        for pair in ["A_vs_B", "A_vs_C", "B_vs_C"]:
+        for pair in df["pair"].drop_duplicates():
             sub = df[df["pair"] == pair].copy()
             if sub.empty:
                 continue
@@ -165,3 +165,15 @@ def export_abc_results_to_excel(df_result_abc: pd.DataFrame, output_path: str | 
 
     wb.save(output_path)
     return output_path
+
+def export_abcd_results_to_excel(df_result_abcd: pd.DataFrame, output_path: str | Path, *, experiment_desc: str | None = None, exp_id: str | int | None = None, date_from: str | None = None, date_to: str | None = None) -> str:
+    """Export A/B/C/D test results to Excel: summary, all metrics and per-pair sheets."""
+    return export_abc_results_to_excel(
+        df_result_abcd,
+        output_path,
+        experiment_desc=experiment_desc,
+        exp_id=exp_id,
+        date_from=date_from,
+        date_to=date_to,
+        all_metrics_title="All ABCD metrics",
+    )

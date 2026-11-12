@@ -58,9 +58,9 @@ def _apply_result_cell_style(cell, value):
 
 
 def _apply_number_formats(ws, header_map: dict[str, int], n_rows: int):
-    percent_cols_fraction = ["rel_delta"]
-    percent_cols_already_pct = ["avg_rel_delta", "power_now"]
-    p_cols = ["p_value"]
+    percent_cols_fraction = ["rel_delta", "power_now"]
+    percent_cols_already_pct = ["avg_rel_delta"]
+    p_cols = ["p_value", "p_value_adj"]
 
     int_cols = [
         "number_samples",
@@ -82,6 +82,13 @@ def _apply_number_formats(ws, header_map: dict[str, int], n_rows: int):
         "avg_abs_delta",
         "ci_lower",
         "ci_upper",
+        "statistic",
+        "effect_size",
+        "rel_ci_lower",
+        "rel_ci_upper",
+        "delta_cuped",
+        "cuped_variance_reduction",
+        "winsorize_threshold",
     ]
 
     for col in percent_cols_fraction:

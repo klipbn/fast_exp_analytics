@@ -8,8 +8,18 @@ from scipy import stats
 from statsmodels.stats.proportion import proportions_ztest
 from statsmodels.stats.weightstats import CompareMeans, DescrStatsW
 
-from .confidence_intervals import metric_confidence_interval
+from ._extensions import (
+    EXTENDED_COLUMNS,
+    build_metric_frame,
+    cuped_stat_frames,
+    extended_stats,
+    metric_options,
+    resolve_inference,
+    validate_metric_options,
+    winsorize_metric_frame,
+)
 from .config import validate_metrics_config
+from .multiple_testing import adjust_pvalues
 
 ALPHA = 0.05
 POWER = 0.80
@@ -46,19 +56,6 @@ def _harmonic_mean_n(n1: int, n2: int) -> float:
     return float(2 / (1 / n1 + 1 / n2))
 
 
-def _welch_df(std_c, n_c, std_t, n_t):
-    """Welch-Satterthwaite degrees of freedom for a two-sample t-interval."""
-    if not _is_finite(std_c) or not _is_finite(std_t) or n_c <= 1 or n_t <= 1:
-        return np.nan
-    v_c = float(std_c) ** 2 / n_c
-    v_t = float(std_t) ** 2 / n_t
-    num = (v_c + v_t) ** 2
-    den = (v_c**2) / (n_c - 1) + (v_t**2) / (n_t - 1)
-    if den == 0:
-        return np.nan
-    return float(num / den)
-
-
 def _days_to_reach_required_n(n_current, n_required, days_running):
     if not _is_finite(n_required) or float(n_required) == np.inf:
         return np.nan
@@ -74,6 +71,19 @@ def _days_to_reach_required_n(n_current, n_required, days_running):
         return np.nan
 
     return int(np.ceil((n_required - n_current) / rate_per_day))
+
+
+def _welch_df(std_c, n_c, std_t, n_t):
+    """Welch-Satterthwaite degrees of freedom for two-sample t-interval."""
+    if not _is_finite(std_c) or not _is_finite(std_t) or n_c <= 1 or n_t <= 1:
+        return np.nan
+    v_c = float(std_c) ** 2 / n_c
+    v_t = float(std_t) ** 2 / n_t
+    num = (v_c + v_t) ** 2
+    den = (v_c ** 2) / (n_c - 1) + (v_t ** 2) / (n_t - 1)
+    if den == 0:
+        return np.nan
+    return float(num / den)
 
 
 def _clean_numeric_series(x):
@@ -103,8 +113,9 @@ def _prep_metric_pair_frames(
         df_metric[col] = pd.to_numeric(df_metric[col], errors="coerce")
         df_metric[col] = df_metric[col].replace([np.inf, -np.inf], np.nan)
 
-    df_ctrl = df_metric.loc[df_metric["exp_group"] == group_ctrl, ["user_id", "num", "den"]].copy()
-    df_tst = df_metric.loc[df_metric["exp_group"] == group_tst, ["user_id", "num", "den"]].copy()
+    cols = ["user_id", "num", "den"] + (["cov"] if "cov" in df_metric.columns else [])
+    df_ctrl = df_metric.loc[df_metric["exp_group"] == group_ctrl, cols].copy()
+    df_tst = df_metric.loc[df_metric["exp_group"] == group_tst, cols].copy()
 
     if metric_type == "additive":
         df_ctrl["value"] = df_ctrl["num"]
@@ -308,6 +319,22 @@ def _power_for_delta(
     return float(1 - stats.norm.cdf(z_alpha - z_eff) + stats.norm.cdf(-z_alpha - z_eff))
 
 
+def _additive_scaled_delta(df_control_metrics, df_pilot_metrics, base_value, exp_value):
+    """Дельта сумм additive-метрики, приведённая к размеру контрольной группы.
+
+    Суммы зависят от числа юнитов: при неравных группах сырая разница сумм
+    показывает разницу размеров, а не эффект, и может иметь другой знак, чем
+    разница средних, по которой считается p-value. Сумма эксперимента
+    масштабируется на ``n_control / n_experiment``; при равных группах
+    результат совпадает с простой разницей сумм.
+    """
+    n_c = int(df_control_metrics["value"].notna().sum())
+    n_e = int(df_pilot_metrics["value"].notna().sum())
+    if n_c == 0 or n_e == 0 or not _is_finite(base_value) or not _is_finite(exp_value):
+        return np.nan
+    return float(exp_value) * n_c / n_e - float(base_value)
+
+
 def calculate_base_exp_values(df_control_metrics, df_pilot_metrics, metric_type):
     if metric_type == "additive":
         base_value = df_control_metrics["value"].sum()
@@ -332,9 +359,14 @@ def calculate_base_exp_values(df_control_metrics, df_pilot_metrics, metric_type)
     else:
         base_value, exp_value = np.nan, np.nan
 
-    abs_delta_value = (
-        exp_value - base_value if _is_finite(base_value) and _is_finite(exp_value) else np.nan
-    )
+    if metric_type == "additive":
+        abs_delta_value = _additive_scaled_delta(
+            df_control_metrics, df_pilot_metrics, base_value, exp_value
+        )
+    else:
+        abs_delta_value = (
+            exp_value - base_value if _is_finite(base_value) and _is_finite(exp_value) else np.nan
+        )
     rel_delta_value = _safe_div(abs_delta_value, base_value)
     return base_value, exp_value, abs_delta_value, rel_delta_value
 
@@ -412,7 +444,22 @@ def calculate_stat(
     power=POWER,
     ci_bootstrap_resamples: int = 10_000,
     ci_random_state: int | None = 0,
+    test: str | None = None,
+    extended: bool = False,
 ):
+    """Посчитать строку результата для одной метрики.
+
+    ``test`` — критерий вместо дефолтного для типа метрики. Если во фреймах есть
+    колонка ``cov``, p-value, CI, MDE и мощность считаются по
+    CUPED-скорректированным значениям; точечные оценки остаются сырыми.
+    """
+    stat_control, stat_pilot = df_control_metrics, df_pilot_metrics
+    cuped_info = {"delta_cuped": np.nan, "variance_reduction": np.nan}
+    if "cov" in df_control_metrics.columns and metric_type in ("additive", "average"):
+        stat_control, stat_pilot, cuped_info = cuped_stat_frames(
+            df_control_metrics, df_pilot_metrics
+        )
+
     base_value, exp_value, abs_delta_value, rel_delta_value = calculate_base_exp_values(
         df_control_metrics,
         df_pilot_metrics,
@@ -425,21 +472,25 @@ def calculate_stat(
         metric_type,
     )
 
-    mde, effect = calculate_mde(df_control_metrics, df_pilot_metrics, metric_type, alpha, power)
+    mde, effect = calculate_mde(stat_control, stat_pilot, metric_type, alpha, power)
     number_samples, n_base, n_exp = calculate_number_samples(df_control_metrics, df_pilot_metrics)
-    p_value = calculate_p_value(df_control_metrics, df_pilot_metrics, metric_type)
-
-    ci_lower, ci_upper = metric_confidence_interval(
-        df_control_metrics,
-        df_pilot_metrics,
+    inference = resolve_inference(
+        stat_control,
+        stat_pilot,
         metric_type,
+        test,
         alpha,
         ci_bootstrap_resamples,
         ci_random_state,
+        calculate_p_value,
+        need_statistic=extended,
     )
+    p_value = inference["p_value"]
 
     if metric_type in ["additive", "average"]:
         observed_delta = avg_abs_delta
+        if _is_finite(cuped_info["delta_cuped"]):
+            observed_delta = cuped_info["delta_cuped"]
     elif metric_type in ["ratio", "share"]:
         observed_delta = abs_delta_value
     elif metric_type == "median":
@@ -448,8 +499,8 @@ def calculate_stat(
         observed_delta = np.nan
 
     n_required_per_group = _required_n_per_group_for_observed_delta(
-        df_control_metrics,
-        df_pilot_metrics,
+        stat_control,
+        stat_pilot,
         metric_type,
         observed_delta,
         alpha,
@@ -457,8 +508,8 @@ def calculate_stat(
     )
 
     power_now = _power_for_delta(
-        df_control_metrics,
-        df_pilot_metrics,
+        stat_control,
+        stat_pilot,
         metric_type,
         observed_delta=observed_delta,
         alpha=alpha,
@@ -491,7 +542,23 @@ def calculate_stat(
         elif (direction == "negative") and (abs_delta_value < 0):
             result = "positive"
 
+    ci_lower, ci_upper = inference["ci_lower"], inference["ci_upper"]
+
+    extra = {
+        "test_name": inference["test_name"],
+        "statistic": inference["statistic"],
+        "delta_cuped": cuped_info["delta_cuped"],
+        "cuped_variance_reduction": cuped_info["variance_reduction"],
+    }
+    if extended:
+        extra.update(
+            extended_stats(
+                df_control_metrics, df_pilot_metrics, stat_control, stat_pilot, metric_type, alpha
+            )
+        )
+
     return {
+        **extra,
         "value_base": base_value,
         "value_exp": exp_value,
         "abs_delta": abs_delta_value,
@@ -566,28 +633,45 @@ def run_ab_test(
     power: float = POWER,
     ci_bootstrap_resamples: int = 10_000,
     ci_random_state: int | None = 0,
+    extended: bool = False,
+    metrics_adjust_method: str | None = None,
 ) -> pd.DataFrame:
+    """A/B тест по набору метрик.
+
+    Конфиг метрик может содержать опциональные колонки:
+
+    * ``test`` — критерий вместо дефолтного (см. ``available_tests()``);
+    * ``covariate`` — пред-экспериментальная колонка для CUPED;
+    * ``winsorize`` — верхний квантиль винзоризации (например, ``0.99``).
+
+    ``ci_bootstrap_resamples`` задаёт также число итераций bootstrap- и
+    перестановочных тестов. ``extended=True`` добавляет колонки
+    ``EXTENDED_COLUMNS`` (имя теста, статистика, размер эффекта, CI
+    относительного изменения, CUPED). ``metrics_adjust_method`` включает
+    поправку на множественные сравнения между метриками (``holm``, ``bh`` и
+    др.) и добавляет колонки ``p_value_adj`` и ``result_adj``.
+    """
     metrics_df = validate_metrics_config(metrics_df)
+    validate_metric_options(metrics_df, multi_group=False)
     _check_required_columns(df, metrics_df)
     days_running = _days_elapsed(exp_start_date, exp_end_date)
     rows: list[dict[str, Any]] = []
 
     for metric in metrics_df.index:
-        metric_type = metrics_df.loc[metric, "type"]
+        metric_type = str(metrics_df.loc[metric, "type"]).lower()
         metric_name = metrics_df.loc[metric, "desc"]
-        metric_direction = metrics_df.loc[metric, "direction"]
+        metric_direction = str(metrics_df.loc[metric, "direction"]).lower()
         num = metrics_df.loc[metric, "num"]
         den = metrics_df.loc[metric, "den"]
 
-        if num != den:
-            df_metric = (
-                df[["user_id", "exp_group", num, den]]
-                .rename(columns={num: "num", den: "den"})
-                .copy()
+        options = metric_options(metrics_df, metric)
+
+        df_metric = build_metric_frame(df, num, den, options["covariate"])
+        winsorize_threshold = np.nan
+        if options["winsorize"] is not None:
+            df_metric, winsorize_threshold = winsorize_metric_frame(
+                df_metric, metric_type, options["winsorize"], (group_base, group_exp)
             )
-        else:
-            df_metric = df[["user_id", "exp_group", num]].rename(columns={num: "num"}).copy()
-            df_metric["den"] = 1.0
 
         df_control_metrics, df_pilot_metrics = _prep_metric_pair_frames(
             df_metric=df_metric,
@@ -606,6 +690,8 @@ def run_ab_test(
             power=power,
             ci_bootstrap_resamples=ci_bootstrap_resamples,
             ci_random_state=ci_random_state,
+            test=options["test"],
+            extended=extended,
         )
 
         rows.append(
@@ -613,12 +699,36 @@ def run_ab_test(
                 "metric_name": metric_name,
                 "metric_type": metric_type,
                 "direction": metric_direction,
+                "winsorize_threshold": winsorize_threshold,
                 **stat_row,
             }
         )
 
     df_result = pd.DataFrame(rows)
-    return df_result[AGGREGATE_COLUMN_NAMES_AB].copy()
+    columns = list(AGGREGATE_COLUMN_NAMES_AB)
+    if metrics_adjust_method is not None:
+        df_result["p_value_adj"], _ = adjust_pvalues(
+            df_result["p_value"].to_numpy(dtype=float), metrics_adjust_method, alpha
+        )
+        df_result["result_adj"] = [
+            _result_label(p, delta, direction, alpha)
+            for p, delta, direction in zip(
+                df_result["p_value_adj"], df_result["abs_delta"], df_result["direction"]
+            )
+        ]
+        columns += ["p_value_adj", "result_adj"]
+    if extended:
+        columns += EXTENDED_COLUMNS
+    return df_result[columns].copy()
+
+
+def _result_label(p_value, abs_delta, direction, alpha) -> str:
+    if not (_is_finite(p_value) and p_value < alpha and _is_finite(abs_delta)):
+        return "neutral"
+    if abs_delta == 0 or direction not in ("positive", "negative"):
+        return "neutral"
+    improved = (abs_delta > 0) == (direction == "positive")
+    return "positive" if improved else "negative"
 
 
 def format_result(val: str) -> str:
@@ -649,10 +759,12 @@ def style_table_ab(
     if slot_lower is not None and slot_upper is not None:
         cap += f", slots ({slot_lower}, {slot_upper}]"
 
+    styler = df_result.style.set_table_attributes("style='display:inline'").set_caption(cap)
+    # Styler.applymap переименован в map в pandas 2.1 и удалён в pandas 3
+    cell_map = styler.map if hasattr(styler, "map") else styler.applymap
+    result_cols = [c for c in ("result", "result_adj") if c in df_result.columns]
     styler = (
-        df_result.style.set_table_attributes("style='display:inline'")
-        .set_caption(cap)
-        .map(format_result, subset=["result"])
+        cell_map(format_result, subset=result_cols)
         .background_gradient(subset=["rel_delta"], axis=0, cmap="RdYlGn")
         .format(
             "{:,.4f}",
