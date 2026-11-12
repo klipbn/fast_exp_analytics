@@ -396,6 +396,8 @@ def test_power_now_is_exported_as_fraction_percent(tmp_path: Path, data):
 
 
 def test_style_table_ab_renders_with_adjusted_columns(data):
+    pytest.importorskip("jinja2")
+    pytest.importorskip("matplotlib")
     from fast_exp_analytics import style_table_ab
 
     metrics = _metrics([["m", "Списания", "average", "amount", "is_in_exp", "positive"]])

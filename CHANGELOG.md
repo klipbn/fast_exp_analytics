@@ -31,6 +31,10 @@ All notable changes to this project should be documented in this file
 - Excel export (AB and ABC / ABCD): `power_now` (a fraction between 0 and 1) was written with the `0.0"%"` format and showed 0.8 as "0.8%"; it now uses a percent format (80.0%)
 - `run_ab_test`: metric type and direction are lower-cased, as in ABC
 
+- `add_cuped_column` failed on pandas 3 with "assignment destination is read-only" (copy-on-write returns read-only arrays)
+- Declared the dependencies of styled notebook tables: new `style` extra (`jinja2`, `matplotlib`), also included in `dev`; previously `style_table_*` failed with an `ImportError` on a clean install
+- CI lint with the current ruff: narrowed blind `except Exception` clauses, removed redundant casts, sorted imports
+
 ### Changed
 
 - Without the new columns and parameters the results of `run_ab_test` and `run_abc_test` are identical to 0.1.50, except for the fixes above

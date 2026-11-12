@@ -36,7 +36,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# styled notebook tables (style_table_ab / style_table_abc / style_table_abcd)
+style = [
+  "jinja2>=3.1",
+  "matplotlib>=3.7",
+]
 dev = [
+  "jinja2>=3.1",
+  "matplotlib>=3.7",
   "build>=1.2.1",
   "twine>=5.1.1",
   "pytest>=8.0",

@@ -2,6 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 from openpyxl import load_workbook
 
 from fast_exp_analytics import (
@@ -124,6 +125,7 @@ def test_abcd_chat_message_lists_all_pairs():
 
 
 def test_abcd_style_table_returns_styler():
+    pytest.importorskip("jinja2")
     result = run_abcd_test(_small_abcd_dataset(), _metrics_config(), "2026-01-01", "2026-01-07")
     styler = style_table_abcd(result, caption="ABCD")
 

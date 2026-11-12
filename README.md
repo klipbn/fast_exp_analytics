@@ -81,6 +81,12 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
+Styled notebook tables (`style_table_ab`, `style_table_abc`, `style_table_abcd`) need `jinja2` and `matplotlib`:
+
+```bash
+pip install "fast-exp-analytics[style]"
+```
+
 For development (tests, lint, notebook tooling):
 
 ```bash

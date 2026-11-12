@@ -81,6 +81,12 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
+Стилизованным таблицам в ноутбуке (`style_table_ab`, `style_table_abc`, `style_table_abcd`) нужны `jinja2` и `matplotlib`:
+
+```bash
+pip install "fast-exp-analytics[style]"
+```
+
 Для разработки (тесты, линтер, ноутбук):
 
 ```bash

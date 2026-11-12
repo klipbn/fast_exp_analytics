@@ -89,8 +89,9 @@ def add_cuped_column(
     """Добавить в DataFrame CUPED-скорректированную колонку (для любого числа групп)."""
     out_col = out_col or f"{value_col}_cuped"
     result = df.copy()
-    y = pd.to_numeric(result[value_col], errors="coerce").to_numpy(dtype=float)
-    x = pd.to_numeric(result[covariate_col], errors="coerce").to_numpy(dtype=float)
+    # copy=True: в pandas 3 (copy-on-write) to_numpy возвращает массив только для чтения
+    y = pd.to_numeric(result[value_col], errors="coerce").to_numpy(dtype=float, copy=True)
+    x = pd.to_numeric(result[covariate_col], errors="coerce").to_numpy(dtype=float, copy=True)
     x[~np.isfinite(x)] = np.nan
     if np.isfinite(x).sum() < 2:
         result[out_col] = y

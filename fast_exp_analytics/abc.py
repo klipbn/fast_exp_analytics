@@ -494,7 +494,8 @@ def _apply_pairwise_pvalue_adjustment(df_result, alpha=ALPHA, method="holm", gro
     df_result["is_significant_adj"] = df_result["p_value"] < alpha
     if method is None:
         return df_result
-    for idx in df_result.groupby(list(group_cols)).groups.values():
+    group_by = group_cols[0] if len(group_cols) == 1 else list(group_cols)
+    for idx in df_result.groupby(group_by).groups.values():
         idx = list(idx)
         pvals = df_result.loc[idx, "p_value"].values.astype(float)
         mask = np.isfinite(pvals)
